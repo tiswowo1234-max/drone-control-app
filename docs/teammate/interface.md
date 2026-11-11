@@ -549,7 +549,7 @@ print(send_pose(x, y, confidence=0.9, ts=t_photo))
 
 **④ 조원 코드 연결**: ②의 `fake_vision.py` 대신 조원의 위치 추정 코드가 같은 주소로 보내면 된다 (5.6 예시).
 
-다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision` (8.5). 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (8.6, `server/README.md` 7장).
+다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision` (8.6). 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (8.6, `server/README.md` 7장).
 
 ---
 
