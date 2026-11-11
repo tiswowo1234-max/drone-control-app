@@ -25,7 +25,7 @@
 {
   "type": "config",
   "api_version": "0.1",
-  "map": { "width_cm": 250, "height_cm": 180 },
+  "map": { "width_cm": 250, "height_cm": 250 },
   "home": { "x_cm": 20, "y_cm": 20 },
   "limits": {
     "max_radius_cm": 150,
