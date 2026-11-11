@@ -52,6 +52,11 @@
 - 각 세션은 자기 경로만 `git add`로 커밋하고(`git add -A` 금지), 브랜치를 바꾸지 않는다.
 - 명세(`docs/api.md`) 변경은 메인 세션이 한다. 다른 세션은 변경 제안만 보고한다.
 
+## Claude 세션 실행 환경 주의
+- Claude 세션의 명령은 격리된 공간에서 실행된다. `C:\Users\tiswo\AppData` 등 **프로젝트 밖 사용자 폴더에 쓴 파일은 사용자의 터미널에서 보이지 않는다.**
+- 그래서 사용자도 써야 하는 캐시·도구는 `C:\dev` 아래에 둔다: Flutter `C:\dev\flutter`, Android SDK `C:\dev\android-sdk`, Dart 패키지 `C:\dev\pub-cache`(`PUB_CACHE`, 사용자 환경 변수와 `.claude/settings.json`에 설정).
+- Python 가상환경은 프로젝트 안(`server\.venv`, `tools\.venv`)에 둔다.
+
 ## 조정 가능한 값
 - 지도 크기, home, 고도·반경 제한, 위도·경도 기준점, 시뮬레이터↔지도 좌표 변환은 모두 **`config/settings.toml`** 한 곳에서 관리한다.
 - 각 값에 `[임시]`/`[확정]` 표시를 남긴다. 실제 환경이 확정되면 이 파일만 수정하고, 코드에 숫자를 직접 쓰지 않는다.

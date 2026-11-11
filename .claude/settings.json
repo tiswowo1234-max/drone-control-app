@@ -1,4 +1,7 @@
 {
+  "env": {
+    "PUB_CACHE": "C:\\dev\\pub-cache"
+  },
   "permissions": {
     "allow": [
       "PowerShell(flutter *)",
