@@ -33,7 +33,7 @@ class FakeLink implements ServerLink {
 Map<String, dynamic> configMsg({double maxRadius = 150}) => {
       'type': 'config',
       'api_version': '0.1',
-      'map': {'width_cm': 250, 'height_cm': 180},
+      'map': {'width_cm': 250, 'height_cm': 250},
       'home': {'x_cm': 20, 'y_cm': 20},
       'limits': {
         'max_radius_cm': maxRadius,
@@ -74,19 +74,19 @@ Map<String, dynamic> stateMsg({
 
 void main() {
   group('MapCoords', () {
-    const config = AppConfig.fallback; // 250 x 180 cm
-    const coords = MapCoords(config: config, viewSize: Size(500, 360));
+    const config = AppConfig.fallback; // 250 x 250 cm
+    const coords = MapCoords(config: config, viewSize: Size(500, 500));
 
     test('화면 왼쪽 아래 = 지도 (0,0)', () {
-      final cm = coords.pxToCm(const Offset(0, 360));
+      final cm = coords.pxToCm(const Offset(0, 500));
       expect(cm.dx, closeTo(0, 1e-9));
       expect(cm.dy, closeTo(0, 1e-9));
     });
 
-    test('화면 오른쪽 위 = 지도 (250,180)', () {
+    test('화면 오른쪽 위 = 지도 (250,250)', () {
       final cm = coords.pxToCm(const Offset(500, 0));
       expect(cm.dx, closeTo(250, 1e-9));
-      expect(cm.dy, closeTo(180, 1e-9));
+      expect(cm.dy, closeTo(250, 1e-9));
     });
 
     test('cm → px → cm 왕복 변환이 일치', () {
@@ -99,7 +99,7 @@ void main() {
     test('지도 밖 판정', () {
       expect(coords.isInside(const Offset(10, 10)), isTrue);
       expect(coords.isInside(const Offset(-1, 10)), isFalse);
-      expect(coords.isInside(const Offset(10, 181)), isFalse);
+      expect(coords.isInside(const Offset(10, 251)), isFalse);
     });
   });
 
@@ -184,7 +184,7 @@ void main() {
       await start(tester);
       await tester.tap(find.byKey(const Key('btn-dispatch')));
       await tester.pump();
-      expect(find.text('목표: x 125.0 cm, y 90.0 cm'), findsOneWidget);
+      expect(find.text('목표: x 125.0 cm, y 125.0 cm'), findsOneWidget);
       expect(find.textContaining('위도·경도(참고): 36.36695, 127.36247'), findsOneWidget);
 
       // 마커를 왼쪽 아래로 끈다
@@ -198,7 +198,7 @@ void main() {
       // 393px 폭 화면 → 1cm = 393/250 px. 끈 거리만큼 정확히 움직여야 한다.
       const pxPerCm = 393 / 250;
       expect(x, closeTo(125 - 60 / pxPerCm, 0.5));
-      expect(y, closeTo(90 - 30 / pxPerCm, 0.5));
+      expect(y, closeTo(125 - 30 / pxPerCm, 0.5));
 
       await tester.tap(find.byKey(const Key('btn-confirm')));
       await tester.pump();

@@ -44,7 +44,7 @@ class AppConfig {
   /// 서버 연결 전 기본값 (config/settings.toml과 동일하게 유지)
   static const fallback = AppConfig(
     mapWidthCm: 250,
-    mapHeightCm: 180,
+    mapHeightCm: 250,
     homeXCm: 20,
     homeYCm: 20,
     limits: Limits(

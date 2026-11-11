@@ -11,7 +11,7 @@ import 'package:drone_control/safety.dart';
 const configExample = {
   'type': 'config',
   'api_version': '0.1',
-  'map': {'width_cm': 250, 'height_cm': 180},
+  'map': {'width_cm': 250, 'height_cm': 250},
   'home': {'x_cm': 20, 'y_cm': 20},
   'limits': {
     'max_radius_cm': 150,
@@ -156,7 +156,7 @@ void main() {
 
     test('지도 경계 밖', () {
       expect(checkTarget(config, const Offset(-1, 50))!.code, 'OUT_OF_BOUNDS');
-      expect(checkTarget(config, const Offset(50, 181))!.code, 'OUT_OF_BOUNDS');
+      expect(checkTarget(config, const Offset(50, 251))!.code, 'OUT_OF_BOUNDS');
     });
 
     test('최대 반경 초과', () {
@@ -190,10 +190,10 @@ void main() {
       final sw = cmToLatLon(config, Offset.zero);
       expect(sw.lat, closeTo(36.3680, 1e-12));
       expect(sw.lon, closeTo(127.3580, 1e-12));
-      final ne = cmToLatLon(config, const Offset(250, 180));
+      final ne = cmToLatLon(config, const Offset(250, 250));
       expect(ne.lat, closeTo(36.3740, 1e-12));
       expect(ne.lon, closeTo(127.3680, 1e-12));
-      final mid = cmToLatLon(config, const Offset(125, 90));
+      final mid = cmToLatLon(config, const Offset(125, 125));
       expect(mid.lat, closeTo(36.3710, 1e-12));
       expect(mid.lon, closeTo(127.3630, 1e-12));
     });
@@ -201,7 +201,7 @@ void main() {
     test('v0.2 네 모서리: 각 모서리와 중앙(네 점 평균)', () {
       final c = AppConfig.fromJson({
         'type': 'config',
-        'map': {'width_cm': 250, 'height_cm': 180},
+        'map': {'width_cm': 250, 'height_cm': 250},
         'geo': {
           'sw': {'lat': 36.3638102, 'lon': 127.3607256},
           'se': {'lat': 36.3666003, 'lon': 127.3667053},
@@ -218,9 +218,9 @@ void main() {
 
       at(0, 0, 36.3638102, 127.3607256); // 왼쪽 아래 = sw
       at(250, 0, 36.3666003, 127.3667053); // 오른쪽 아래 = se
-      at(0, 180, 36.3672948, 127.3582399); // 왼쪽 위 = nw
-      at(250, 180, 36.3700849, 127.3642196); // 오른쪽 위 = ne
-      at(125, 90, (36.3638102 + 36.3666003 + 36.3672948 + 36.3700849) / 4,
+      at(0, 250, 36.3672948, 127.3582399); // 왼쪽 위 = nw
+      at(250, 250, 36.3700849, 127.3642196); // 오른쪽 위 = ne
+      at(125, 125, (36.3638102 + 36.3666003 + 36.3672948 + 36.3700849) / 4,
           (127.3607256 + 127.3667053 + 127.3582399 + 127.3642196) / 4);
     });
 

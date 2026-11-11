@@ -6,9 +6,6 @@ import 'config.dart';
 import 'map_coords.dart';
 import 'protocol.dart';
 
-/// 지도 이미지의 가로:세로 비율 (assets/map.png = 2501x1802)
-const double kMapImageAspect = 2501 / 1802;
-
 /// 확대·이동 가능한 지도 + 위에 겹쳐 그리는 표시들
 /// (이륙 지점, 허용 반경, 드론, 현재 이동 목표, 출동 마커).
 ///
@@ -66,12 +63,14 @@ class _MapViewState extends State<MapView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 화면 안에 지도 비율을 유지한 채 최대한 크게 맞춘다
+        // 화면 안에 지도 비율(설정의 가로 cm : 세로 cm)을 유지한 채 최대한 크게 맞춘다.
+        // assets/map.png도 같은 비율로 만들어 둔다 (tools/pdf_to_png.py).
+        final aspect = widget.config.mapWidthCm / widget.config.mapHeightCm;
         var w = constraints.maxWidth;
-        var h = w / kMapImageAspect;
+        var h = w / aspect;
         if (h > constraints.maxHeight) {
           h = constraints.maxHeight;
-          w = h * kMapImageAspect;
+          w = h * aspect;
         }
         final coords = MapCoords(config: widget.config, viewSize: Size(w, h));
 
