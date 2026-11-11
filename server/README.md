@@ -1,6 +1,6 @@
 # 중계 서버 (앱 ⇄ 드론)
 
-- 명세: `docs/api.md` v0.1 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
+- 명세: `docs/api.md` v0.2 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
 - 구조: 앱 ⇄ (WebSocket `ws://<PC IP>:8000/ws`) ⇄ 이 서버 ⇄ 백엔드 `mock` | `sim` | `real`
 
 | 백엔드 | 무엇과 연결? | 언제 쓰나 |
