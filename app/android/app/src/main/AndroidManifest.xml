@@ -1,8 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 중계 서버(PC/라즈베리파이)와 WebSocket으로 통신하기 위해 필요 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="drone_control"
+        android:label="경비 드론"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
