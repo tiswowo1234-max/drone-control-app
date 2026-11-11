@@ -1,13 +1,12 @@
 # 송수신 데이터 형식 — 라즈베리파이 담당 조원용
 
+> **명세 v0.6 기준 · 작성일 2026-11-11**
 > 대상: 라즈베리파이 쪽 드론 제어와 카메라 위치 추정을 맡은 조원 (이 앱·서버 코드를 처음 보는 사람)
-> **명세 v0.6 기준 · 작성일 2026-11-11** (v0.6의 명령권 넘겨받기는 서버 **구현 중**: 3.1, 3.9 참고)
-> 대상: 라즈베리파이 쪽 드론 제어와 카메라 위치 추정을 맡은 조원 (이 앱·서버 코드를 처음 보는 사람)
-> 기준: 앱⇄서버 명세 `docs/api.md` **v0.6**, 서버 코드 `server/drone_server/` (vision 입력 구현 커밋 `79b4f36`)
+> 기준: 앱⇄서버 명세 `docs/api.md` **v0.6**, 서버 코드 `server/drone_server/` (커밋 `863d42f`, `API_VERSION = "0.6"`)
 > 이 문서는 **연동 형식을 맞추기 위한 공유용**이다. 바꾸고 싶은 점이 있으면 말해 주세요. 정식 명세는 `docs/api.md`가 기준이다.
 
 근거 표기: `controller.py:212`는 `server/drone_server/controller.py`의 212번째 줄이다. (`backends/tello.py`도 `server/drone_server/` 아래)
-서버 코드가 바뀌면 줄 번호가 조금 달라질 수 있다. (`app.py` 줄 번호는 커밋 `79b4f36` 기준이며, 이후 서버 커밋으로 약 6줄씩 밀려 있다. 명령권 넘겨받기 구현 커밋이 들어오면 함께 갱신한다.) 아직 풀리지 않은 문제는 6.2 "알려진 한계"에 모아 두었다.
+줄 번호는 서버 커밋 `863d42f` 기준이다. 서버 코드가 바뀌면 조금 달라질 수 있다. 아직 풀리지 않은 문제는 6.2 "알려진 한계"에 모아 두었다.
 
 ---
 
@@ -82,7 +81,7 @@ flowchart LR
 | 앱 ⇄ 서버 (WebSocket) | **cm** | `{"x_cm": 153.2, "y_cm": 70.2}` |
 | 위치 추정 코드 → 서버 (`/vision/pose`) | **m** | `{"x_m": 1.532, "y_m": 0.702}` |
 
-서버가 받은 m 값에 ×100 해서 cm로 바꾼다 (`app.py:174`).
+서버가 받은 m 값에 ×100 해서 cm로 바꾼다 (`app.py:180`).
 
 ### 2.3 실제 드론의 방향 가정
 - TT에는 GPS가 없어서 서버는 "지금 위치 → 목표" 차이를 **드론 기준 상대 이동**(`go`)으로 바꿔 보낸다.
@@ -107,19 +106,18 @@ sequenceDiagram
 ```
 - 서버는 검사를 통과하면 **바로 `ack`(ok)를 보내고**, 실제 비행은 그 뒤 백그라운드 작업("미션")으로 실행한다 (`controller.py:147-161`, `controller.py:97-98`). 비행이 끝났는지는 `state.mode`로 본다.
 - 새 명령이 접수되면 진행 중 미션은 취소된다 (`controller.py:88-95`). 미션 실행 중 오류가 나면 `event` `CMD_FAILED`를 보내고 mode를 `hovering`(날고 있으면) 또는 `idle`로 돌린다 (`controller.py:100-110`).
-- **명령권**: 앱이 여러 개 연결되면 모두 `state`를 받지만, 명령은 **명령권을 가진 앱**(마지막에 연결한 앱)만 보낼 수 있다. 다른 앱의 `cmd`는 `BUSY` (`app.py:207-215`).
-  새 앱이 연결해 명령권이 넘어가면 `event` `CONTROLLER_CHANGED` (`app.py:184-185`).
-- **명령권 넘겨받기 (명세 v0.6, 서버 구현 중)**: 명령권 앱의 연결이 끊기면, 남아 있는 앱 중 **가장 최근에 연결된 앱**이 즉시 명령권을 넘겨받고 `CONTROLLER_CHANGED`를 보낸다. 비행은 계속되며, 이후 생존 신호는 새 명령권 앱의 `ping`으로 판단한다. 남은 앱이 없으면 3.9의 자동 착륙.
-  > 구현 중: 서버 세션이 작업 중이라 아직 코드 근거가 없다. 지금 코드는 끊긴 앱을 목록에서 빼기만 해서(`app.py:192-195`) 명령권은 자연히 남은 최근 앱으로 가지만, 넘겨받을 때 `CONTROLLER_CHANGED`를 보내지 않는다.
-- `cmd`를 받으면 그것도 생존 신호로 친다 (`app.py:216`).
-- 공통 형식 오류: `id`가 없거나 빈 문자열이면 `BAD_REQUEST` (`controller.py:149-150`), 모르는 `cmd`면 `BAD_REQUEST` (`controller.py:152-153`), JSON이 아니면 `event` `BAD_REQUEST` (`app.py:198-205`).
+- **명령권**: 앱이 여러 개 연결되면 모두 `state`를 받지만, 명령은 **명령권을 가진 앱**(마지막에 연결한 앱)만 보낼 수 있다. 다른 앱의 `cmd`는 `BUSY` (`app.py:224`, `229-232`).
+  새 앱이 연결하면 그 앱이 명령권을 갖고, 생존 신호 타이머를 새로 시작하며, 앱이 2개 이상이면 `event` `CONTROLLER_CHANGED`를 보낸다 (`app.py:190-193`).
+- **명령권 넘겨받기 (명세 v0.6 1장)**: 명령권 앱의 연결이 끊기면, 남아 있는 앱 중 **가장 최근에 연결된 앱**이 즉시 명령권을 넘겨받는다. 서버는 넘겨받는 순간 생존 신호 타이머를 새로 시작하고(바로 자동 착륙하지 않도록) 모든 앱에 `CONTROLLER_CHANGED`를 보낸다 (`app.py:200-212`). 비행은 계속되며, 이후 생존 신호는 새 명령권 앱의 `ping`으로 판단한다. 남은 앱이 없으면 3.9의 자동 착륙.
+- `cmd`를 받으면 그것도 생존 신호로 친다 (`app.py:233`).
+- 공통 형식 오류: `id`가 없거나 빈 문자열이면 `BAD_REQUEST` (`controller.py:149-150`), 모르는 `cmd`면 `BAD_REQUEST` (`controller.py:152-153`), JSON이 아니면 `event` `BAD_REQUEST` (`app.py:215-222`).
 - `id`는 앱이 정하는 문자열(현재 앱은 `"c-1"`, `"c-2"`, … `app/lib/drone_client.dart:222`).
 
 ### 3.2 서버 → 드론 SDK 명령의 공통 규칙 (실제 드론 = `real` 백엔드)
 | 항목 | 내용 | 근거 |
 |---|---|---|
 | 라이브러리 | 진짜 `djitellopy`의 `Tello()` 1개로 명령과 상태 읽기를 함께 함 | `backends/real.py:37-68` |
-| 연결 | `connect()` (SDK `command`). 실패하면 서버가 2초마다 재시도 | `backends/tello.py:104-121`, `app.py:88-96` |
+| 연결 | `connect()` (SDK `command`). 실패하면 서버가 2초마다 재시도 | `backends/tello.py:104-121`, `app.py:89-97` |
 | 미션패드 모드일 때만 | 연결 직후 `mon`, `mdirection 0`(아래쪽만) | `backends/real.py:53-55` |
 | 이동 명령 | `go x y z speed` — **x=전진, y=왼쪽, z=위** (드론 기준, cm). speed = `[real] speed_cm_s` = **30** | `backends/tello.py:231-237` |
 | 구간 길이 | 한 번에 최대 `[real] segment_cm` = **50 cm**. 남은 거리를 같은 길이로 나눈 첫 구간만 보내고, 끝나면 **위치를 다시 읽고** 다시 계산 (폐루프) | `backends/tello.py:42-59`, `224-242` |
@@ -282,10 +280,10 @@ emergency     ← 모터 즉시 정지
 ```json
 { "type": "ping", "ts": 1763000000.5 }
 ```
-- 응답은 없다. **명령권을 가진 앱**의 ping(과 cmd)만 생존 신호로 친다 (`app.py:208-211`, `216`).
+- 응답은 없다. **명령권을 가진 앱**의 ping(과 cmd)만 생존 신호로 친다 (`app.py:224-228`, `233`).
 - 서버 감시 루프(0.2초마다, `controller.py:259-298`):
   - 비행 중인데 **명령권 앱**에게서 `link_timeout_s`(**3초**) 동안 ping/cmd가 없으면 → `event` warn `LINK_LOST_LANDING` + 3.6과 같은 착륙 (`controller.py:270-277`)
-  - 명령권 앱이 끊겨도 다른 앱이 남아 있으면 명령권이 그 앱으로 넘어가고(3.1), 그 앱의 ping으로 판단한다. **남은 앱이 하나도 없으면** 마지막 생존 신호 뒤 3초가 지나 자동 착륙한다. (명세 v0.6 4.2, 서버 구현 중)
+  - 명령권 앱이 끊겨도 다른 앱이 남아 있으면 명령권이 그 앱으로 넘어가고 타이머가 새로 시작되며(3.1, `app.py:205-208`), 그 앱의 ping으로 판단한다. **남은 앱이 하나도 없으면** 타이머가 새로 시작되지 않으므로, 마지막 생존 신호 뒤 3초가 지나 자동 착륙한다 (명세 v0.6 4.2, `controller.py:270-277`).
   - 비행 중 배터리 < 20% → `event` warn `LOW_BATTERY` (착지할 때까지 1번만) (`controller.py:279-285`)
   - 드론 연결이 바뀌면 → `DRONE_CONNECTED`(info) / `DRONE_DISCONNECTED`(error) (`controller.py:261-266`)
   - 미션이 없는데 드론이 착지 상태가 되면 mode를 `idle`로 (`controller.py:288-290`)
@@ -305,10 +303,10 @@ emergency     ← 모터 즉시 정지
 
 ## 4. 라즈베리파이 → 앱: config / state / ack / event
 
-연결하면 `config` 1회 → `state` 1회 → 그 뒤 `state`를 `[server] state_hz`(5Hz)로 계속 보낸다 (`app.py:177-183`, `98-106`).
-정수인 숫자는 JSON 정수로 보낸다 (`250.0` → `250`, `app.py:46-54`).
+연결하면 `config` 1회 → `state` 1회 → 그 뒤 `state`를 `[server] state_hz`(5Hz)로 계속 보낸다 (`app.py:183-189`, `99-107`).
+정수인 숫자는 JSON 정수로 보낸다 (`250.0` → `250`, `app.py:47-55`).
 
-### 4.1 `config` — 연결 직후 1회 (`app.py:25-43`)
+### 4.1 `config` — 연결 직후 1회 (`app.py:26-44`)
 ```json
 {
   "type": "config",
@@ -388,7 +386,7 @@ emergency     ← 모터 즉시 정지
 | `LOW_BATTERY` | warn | 비행 중 배터리 < 20% |
 | `DRONE_CONNECTED` / `DRONE_DISCONNECTED` | info / error | 드론 연결 변화 |
 | `CMD_FAILED` | error | 접수된 명령이 실행 중 실패 (예: TT가 `go`에 error 응답) |
-| `CONTROLLER_CHANGED` | info | 다른 앱이 새로 연결해 명령권이 넘어감, 또는 명령권 앱이 끊겨 남은 최근 앱이 넘겨받음(v0.6, 서버 구현 중) |
+| `CONTROLLER_CHANGED` | info | 다른 앱이 새로 연결해 명령권이 넘어감, 또는 명령권 앱이 끊겨 남은 최근 앱이 넘겨받음 (v0.6, `app.py:205-212`) |
 | `ALREADY_LANDED` | info | 착지 상태에서 `return_home` |
 | `BAD_REQUEST` | error | 앱이 JSON이 아닌 메시지를 보냄 |
 
@@ -396,7 +394,7 @@ emergency     ← 모터 즉시 정지
 
 ## 5. 위치 추정 코드 → 서버: `POST /vision/pose`
 
-> 구현: 서버 커밋 `79b4f36` (`app.py:139-175`, `positioning.py:145-207`, `server/tools/fake_vision.py`). 서버 쪽 사용법은 `server/README.md` 3장.
+> 구현: 서버 커밋 `79b4f36` (`app.py:145-181`, `positioning.py:145-207`, `server/tools/fake_vision.py`). 서버 쪽 사용법은 `server/README.md` 3장.
 
 ### 5.1 보내는 형식
 ```
@@ -409,13 +407,13 @@ Content-Type: application/json
 ```
 | 필드 | 필수 | 단위·범위 | 서버가 하는 일 | 근거 |
 |---|---|---|---|---|
-| `x_m` | ✅ | m, 지도 왼쪽이 0, 오른쪽 + (0~2.5) | ×100 → `pos.x_cm` | `app.py:162`, `174` |
+| `x_m` | ✅ | m, 지도 왼쪽이 0, 오른쪽 + (0~2.5) | ×100 → `pos.x_cm` | `app.py:168`, `180` |
 | `y_m` | ✅ | m, 지도 **아래가 0**, 위쪽 + (0~2.5) | ×100 → `pos.y_cm` | 〃 |
 | `yaw_deg` | | °, 지도 위쪽 0, 시계방향 + | 앱의 `pos.yaw_deg` 표시에만 사용. 없으면 TT 센서 yaw | `positioning.py:196-198` |
-| `confidence` | | 0~1 | `[vision] min_confidence`(현재 0.0)보다 낮으면 거부 | `app.py:166-173` |
+| `confidence` | | 0~1 | `[vision] min_confidence`(현재 0.0)보다 낮으면 거부 | `app.py:172-179` |
 | `ts` | | 사진 찍은 시각, 유닉스 초 (`time.time()`) | **순서 확인에만** 사용: 이전에 받은 `ts`보다 오래된 값은 버림 | `positioning.py:166-170` |
 
-- 숫자는 JSON 숫자(정수 또는 실수)여야 한다. 문자열 `"1.5"`나 `true`는 `BAD_REQUEST` (`app.py:151-159`).
+- 숫자는 JSON 숫자(정수 또는 실수)여야 한다. 문자열 `"1.5"`나 `true`는 `BAD_REQUEST` (`app.py:157-165`).
 - 높이(z)는 보내지 않는다. 높이는 TT 센서 `h`를 쓴다.
 
 ### 5.2 응답
@@ -427,12 +425,12 @@ Content-Type: application/json
 ```
 | HTTP | `error` | 언제 | 근거 |
 |---|---|---|---|
-| 200 | — | 접수 | `app.py:175` |
-| 400 | `BAD_REQUEST` | 서버의 vision 입력이 꺼져 있음 (아래 5.5), JSON 아님, 필수 필드 없음, 숫자가 아님, `confidence`가 0~1 밖 | `app.py:142-167` |
-| 400 | `OUT_OF_BOUNDS` | x, y가 -0.1 ~ 2.6 m 밖 (`[vision] margin_m` = 0.1 m 여유) | `app.py:168-171` |
-| 400 | `LOW_CONFIDENCE` | `confidence` < `min_confidence` | `app.py:172-173` |
+| 200 | — | 접수 | `app.py:181` |
+| 400 | `BAD_REQUEST` | 서버의 vision 입력이 꺼져 있음 (아래 5.5), JSON 아님, 필수 필드 없음, 숫자가 아님, `confidence`가 0~1 밖 | `app.py:148-173` |
+| 400 | `OUT_OF_BOUNDS` | x, y가 -0.1 ~ 2.6 m 밖 (`[vision] margin_m` = 0.1 m 여유) | `app.py:174-177` |
+| 400 | `LOW_CONFIDENCE` | `confidence` < `min_confidence` | `app.py:178-179` |
 
-- `ts`가 이전 값보다 오래돼 버려진 경우에도 응답은 `{"ok": true}`이다 (명세 7.2, `app.py:174-175`). 응답이 ok여도 순서가 뒤바뀐 값은 반영되지 않는다.
+- `ts`가 이전 값보다 오래돼 버려진 경우에도 응답은 `{"ok": true}`이다 (명세 7.2, `app.py:180-181`). 응답이 ok여도 순서가 뒤바뀐 값은 반영되지 않는다.
 
 ### 5.3 서버가 위치를 쓰는 방식 (`positioning.py:145-207`)
 ```
@@ -445,7 +443,7 @@ Content-Type: application/json
 - 서버는 **가장 최근 값 하나만** 쓴다. 평균·필터링은 하지 않는다 → 튀는 값을 거르는 일은 위치 추정 코드 쪽에서 해 주세요.
 - "얼마나 오래됐나"는 `ts`가 아니라 **서버가 받은 시각** 기준이다 (`positioning.py:172`, `179-185`).
 - 이동 중에는 **각 `go` 구간(최대 50cm)을 시작할 때마다** 현재 위치를 다시 읽는다 (3.2). 그래서 위치 값이 구간 사이에 들어와 있으면 다음 구간 계산이 보정된다.
-- 상태 확인: 브라우저로 `http://<서버IP>:8000/` → `"vision": {"enabled": true, "last_age_s": 0.12, "stale_s": 1.0}` (마지막 값이 몇 초 전인지) (`app.py:124-134`)
+- 상태 확인: 브라우저로 `http://<서버IP>:8000/` → `"vision": {"enabled": true, "last_age_s": 0.12, "stale_s": 1.0}` (마지막 값이 몇 초 전인지) (`app.py:130-140`)
 
 ### 5.4 알아 둘 점
 - **권장 빈도: 1초에 2번 이상** (명세 7.2). `stale_s`(1초) 안에 값이 계속 들어와야 앱에 `vision`으로 표시된다. 더 느리게 보낼 수밖에 없으면 `[vision] stale_s`를 늘린다.
