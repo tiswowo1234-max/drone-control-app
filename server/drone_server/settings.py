@@ -61,6 +61,7 @@ class TelloCfg:
     port: int = 9911              # sim 전용
     simulator_python_dir: str = "RoboMasterTT-Simulator beta/Python"  # sim 전용 (가짜 djitellopy 위치)
     auto_reset_after_emergency: bool = True  # sim 전용
+    max_height_cm: float = 0.0  # 기체 높이 상한(기체 cm). 0이면 없음. 시뮬레이터는 높이 센서가 약 29.8 m에서 멈춘다
     land_descend_to_cm: float = 0.0  # 착륙 전에 이 높이(기체 cm)까지 go로 먼저 내려온다. 0이면 바로 land
 
 

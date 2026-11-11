@@ -48,7 +48,7 @@ def test_goto_from_ground_then_return_home(settings):
         assert (await c.handle_cmd(cmd("2", "return_home")))["ok"]
         await wait_mode(c, "idle")
         t = b.telemetry()
-        assert not t.flying and round(t.pos.x_cm) == 20 and round(t.pos.y_cm) == 20 and t.pos.z_cm == 0
+        assert not t.flying and round(t.pos.x_cm) == 153 and round(t.pos.y_cm) == 70 and t.pos.z_cm == 0
     run(go())
 
 
@@ -78,7 +78,7 @@ def test_stop_interrupts_move(settings):
         b, c, _ = await setup(s)
         b.flying = True
         b.pose.z_cm = 80
-        await c.handle_cmd(cmd("1", "goto", x_cm=180, y_cm=120))
+        await c.handle_cmd(cmd("1", "goto", x_cm=40, y_cm=200))
         await asyncio.sleep(0.3)
         assert c.mode == "moving"
         ack = await c.handle_cmd(cmd("2", "stop"))
@@ -88,7 +88,7 @@ def test_stop_interrupts_move(settings):
         await asyncio.sleep(0.2)
         p2 = b.telemetry().pos
         assert (p1.x_cm, p1.y_cm) == (p2.x_cm, p2.y_cm)  # 멈춰 있음
-        assert p1.x_cm < 170 and c.target is None
+        assert p1.x_cm > 45 and c.target is None
     run(go())
 
 
@@ -97,14 +97,14 @@ def test_land_interrupts_move(settings):
         s = replace(settings, mock=replace(settings.mock, time_scale=2.0))
         b, c, _ = await setup(s)
         b.flying, b.pose.z_cm = True, 80
-        await c.handle_cmd(cmd("1", "goto", x_cm=180, y_cm=120))
+        await c.handle_cmd(cmd("1", "goto", x_cm=40, y_cm=200))
         await asyncio.sleep(0.2)
         assert (await c.handle_cmd(cmd("2", "land")))["ok"]
         assert c.mode == "landing"
         # 착륙 중 goto는 BUSY
         assert (await c.handle_cmd(cmd("3", "goto", x_cm=50, y_cm=50)))["error"] == "BUSY"
         await wait_mode(c, "idle")
-        assert not b.flying and b.pose.x_cm < 170
+        assert not b.flying and b.pose.x_cm > 45
     run(go())
 
 
@@ -112,7 +112,7 @@ def test_emergency_requires_confirm_and_stops_immediately(settings):
     async def go():
         b, c, ev = await setup(settings)
         b.flying, b.pose.z_cm = True, 80
-        await c.handle_cmd(cmd("1", "goto", x_cm=180, y_cm=120))
+        await c.handle_cmd(cmd("1", "goto", x_cm=40, y_cm=200))
         assert (await c.handle_cmd(cmd("2", "emergency")))["error"] == "NOT_CONFIRMED"
         assert (await c.handle_cmd(cmd("3", "emergency", confirm="yes")))["error"] == "NOT_CONFIRMED"
         assert b.flying
@@ -165,7 +165,7 @@ def test_safety_rejections_reach_ack(settings):
         b, c, _ = await setup(settings)
         cases = [
             (dict(x_cm=-5, y_cm=10), "OUT_OF_BOUNDS"),
-            (dict(x_cm=240, y_cm=170), "TOO_FAR"),
+            (dict(x_cm=10, y_cm=240), "TOO_FAR"),
             (dict(x_cm=50, y_cm=50, z_cm=300), "ALT_LIMIT"),
             (dict(x_cm="50", y_cm=50), "BAD_REQUEST"),
             (dict(x_cm=50), "BAD_REQUEST"),

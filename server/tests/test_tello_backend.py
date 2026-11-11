@@ -10,8 +10,8 @@ from drone_server.models import Pose
 from drone_server.positioning import DeadReckoningProvider, DroneFrame, SimFrame, SimTruthProvider
 from drone_server.settings import SimCalibration, TelloCfg, load_settings
 
-CAL = SimCalibration(origin_x_m=19.541, origin_z_m=-37.366, scale_cm_per_m=4.051,
-                     map_x_from="-x", map_y_from="+z", rotation_deg=29.14)
+CAL = SimCalibration(origin_x_m=35.565, origin_z_m=-35.809, scale_cm_per_m=3.504,
+                     map_x_from="-x", map_y_from="+z", rotation_deg=0.03)
 
 
 class FakeSimTello:
@@ -61,15 +61,15 @@ def make_backend(tello, provider, cfg=None, frame=None):
     def reset(t):
         t.x, t.z, t.h, t.mode, t.flying = 0.0, -2.5, 0.0, "Grounded", False
 
-    return TelloBackend(name="sim", cfg=cfg, provider=provider, home=Pose(20, 20, 0),
+    return TelloBackend(name="sim", cfg=cfg, provider=provider, home=Pose(153.2, 70.2, 0),
                         make_cmd_tello=lambda: tello, make_monitor_tello=None,
                         read_state=lambda t: t.get_sim_debug_state(), sim_reset=reset,
                         frame=frame or SimFrame(CAL))
 
 
 def test_calibration_corners_and_roundtrip():
-    for sim, want in [((19.541, -37.366), (0, 0)), ((-34.279, -7.356), (250, 0)),
-                      ((41.065, 1.579), (0, 180)), ((-12.755, 31.59), (250, 180))]:
+    for sim, want in [((35.565, -35.809), (0, 0)), ((-35.628, -35.772), (250, 0)),
+                      ((35.592, 35.697), (0, 250)), ((-35.601, 35.733), (250, 250))]:
         x, y = CAL.sim_to_map(*sim)
         assert abs(x - want[0]) < 1.5 and abs(y - want[1]) < 1.5, (sim, x, y)
     x, y = CAL.map_to_sim(*CAL.sim_to_map(3.0, -4.0))
@@ -77,14 +77,14 @@ def test_calibration_corners_and_roundtrip():
 
 
 def test_calibration_is_mirrored_yaw():
-    # 시뮬레이터 yaw 0(+z=북) → 지도 yaw 약 +29°, 시계방향 회전은 지도에서 반시계(거울 반전)
-    assert abs(CAL.sim_yaw_to_map(0) - 29.14) < 0.01
+    # 시뮬레이터 yaw 0(+z=북) → 지도 yaw 약 0°, 시계방향 회전은 지도에서 반시계(거울 반전)
+    assert abs(CAL.sim_yaw_to_map(0) - 0.03) < 0.01
     assert CAL.sim_yaw_to_map(10) < CAL.sim_yaw_to_map(0)
 
 
 def test_settings_file_calibration_matches():
     c = load_settings().sim_calibration
-    assert c.map_x_from == "-x" and abs(c.scale_cm_per_m - 4.05) < 0.1
+    assert c.map_x_from == "-x" and abs(c.scale_cm_per_m - 3.5) < 0.1
 
 
 def test_plan_step_identity_frame():
@@ -109,7 +109,7 @@ def test_sim_goto_reaches_map_target(source):
         b._start_pose = lambda raw: (lambda p: (p.update(raw), p.pose())[1])(SimTruthProvider(CAL))
         await b.connect()
         start = b.telemetry().pos
-        assert abs(start.x_cm - 137.9) < 0.5 and abs(start.y_cm - 84.8) < 0.5
+        assert abs(start.x_cm - 124.7) < 0.5 and abs(start.y_cm - 116.6) < 0.5
         await b.takeoff()
         await b.move_to(100, 60, 80)
         x, y = CAL.sim_to_map(t.x, t.z)
@@ -142,6 +142,19 @@ def test_real_axes_use_sdk_convention():
         await b.move_to(80, 20, 80)
         assert t.calls[-1] == ("go", 0, -60, 0)
         assert abs(b.telemetry().pos.x_cm - 80) < 1e-6
+        await b.close()
+    asyncio.run(go())
+
+
+def test_sim_height_cap():
+    async def go():
+        t = FakeSimTello()
+        cfg = TelloCfg(go_axes="sim", segment_cm=500, speed_cm_s=100, max_height_cm=2800)
+        b = make_backend(t, SimTruthProvider(CAL), cfg)
+        await b.connect()
+        await b.takeoff()
+        await b.move_to(124, 117, 140)  # 140 cm = 시뮬 40 m → 28 m로 제한
+        assert t.h <= 2800 and t.h > 2700
         await b.close()
     asyncio.run(go())
 

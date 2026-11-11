@@ -16,7 +16,7 @@ def test_ok_target(settings):
     assert code(check_target, settings, 120, 90, 80) is None
 
 
-@pytest.mark.parametrize("x,y", [(-1, 50), (251, 50), (50, -0.1), (50, 181)])
+@pytest.mark.parametrize("x,y", [(-1, 50), (251, 50), (50, -0.1), (50, 251)])
 def test_out_of_bounds(settings, x, y):
     assert code(check_target, settings, x, y, 80) == "OUT_OF_BOUNDS"
 
@@ -26,8 +26,9 @@ def test_map_edges_are_inside(settings):
 
 
 def test_too_far(settings):
-    # home (20,20) 에서 반경 200 → (240,170)은 약 266cm
-    assert code(check_target, settings, 240, 170, 80) == "TOO_FAR"
+    # home 정문 (153.2,70.2) 에서 반경 200 → (10,240)은 약 222cm
+    assert code(check_target, settings, 10, 240, 80) == "TOO_FAR"
+    assert code(check_target, settings, 153, 250, 80) is None  # 약 180cm
 
 
 @pytest.mark.parametrize("z", [49, 151, -10])

@@ -24,8 +24,8 @@ def test_config_first_then_state(settings):
     with make_client(settings) as client, client.websocket_connect("/ws") as ws:
         cfg = ws.receive_json()
         assert cfg["type"] == "config" and cfg["api_version"] == "0.2"
-        assert cfg["map"] == {"width_cm": 250, "height_cm": 180}
-        assert cfg["home"] == {"x_cm": 20, "y_cm": 20}
+        assert cfg["map"] == {"width_cm": 250, "height_cm": 250}
+        assert cfg["home"] == {"x_cm": 153.2, "y_cm": 70.2}
         assert set(cfg["limits"]) == {"max_radius_cm", "min_alt_cm", "max_alt_cm", "default_alt_cm",
                                       "min_battery_pct", "link_timeout_s"}
         assert cfg["no_fly_zones"] == [] and cfg["backend"] == "mock" and "geo" in cfg

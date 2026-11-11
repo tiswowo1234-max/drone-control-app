@@ -213,6 +213,11 @@ class TelloBackend(DroneBackend):
         cur = self.provider.pose()
         if cur is None:
             raise BackendError("현재 위치를 알 수 없습니다")
+        if self.cfg.max_height_cm > 0:
+            z_cap = self.frame.alt_to_map(self.cfg.max_height_cm)
+            if z_cm > z_cap:
+                log.warning("목표 고도 %.1f cm → 기체 높이 상한 때문에 %.1f cm로 제한", z_cm, z_cap)
+                z_cm = z_cap
         wd = self.frame.map_to_drone(x_cm - cur.x_cm, y_cm - cur.y_cm, z_cm - cur.z_cm)
         max_steps = math.ceil(math.hypot(*wd) / max(self.cfg.segment_cm, 1)) + 10
         for _ in range(max_steps):
