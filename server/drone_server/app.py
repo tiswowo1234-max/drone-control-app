@@ -187,6 +187,8 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         log.info("app connected (%d clients)", len(hub.clients))
         await hub.send(ws, config_msg)
         await hub.send(ws, ctrl.state_message())
+        # 새로 연결한 앱이 명령권을 갖는다. 아직 ping을 못 보냈으니 생존 타이머를 새로 시작한다.
+        ctrl.note_alive()
         if len(hub.clients) > 1:
             await hub.broadcast(make_event("info", "CONTROLLER_CHANGED", "새로 연결한 앱이 명령 권한을 가집니다"))
         try:
@@ -196,9 +198,18 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         except WebSocketDisconnect:
             pass
         finally:
+            was_controller = ws is hub.controller
             if ws in hub.clients:
                 hub.clients.remove(ws)
             log.info("app disconnected (%d clients)", len(hub.clients))
+            if was_controller and hub.clients:
+                # 명령권 넘겨받기 (docs/api.md 1장): 남은 앱 중 가장 최근에 연결된 앱(clients[-1])이 넘겨받는다.
+                # 넘겨받는 순간 바로 자동 착륙하지 않도록 새 명령권 앱의 ping 타이머를 지금부터 센다.
+                ctrl.note_alive()
+                log.info("controller handed over to remaining app (%d clients)", len(hub.clients))
+                await hub.broadcast(make_event(
+                    "info", "CONTROLLER_CHANGED",
+                    "명령 권한을 가진 앱의 연결이 끊겨, 남은 앱(가장 최근 연결)이 명령 권한을 넘겨받았습니다"))
 
     async def handle_message(ws: WebSocket, text: str) -> None:
         try:

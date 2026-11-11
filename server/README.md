@@ -1,6 +1,6 @@
 # 중계 서버 (앱 ⇄ 드론)
 
-- 명세: `docs/api.md` v0.5 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
+- 명세: `docs/api.md` v0.6 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
 - 구조: 앱 ⇄ (WebSocket `ws://<PC IP>:8000/ws`) ⇄ 이 서버 ⇄ 백엔드 `mock` | `sim` | `real`
 
 | 백엔드 | 무엇과 연결? | 언제 쓰나 |
@@ -119,8 +119,10 @@ cd C:\dev\drone-control-app\server
 ## 5. 동작 규칙 (명세에 없는 세부)
 
 - 연결하면 `config` 1회 → 바로 `state` 1회 → 이후 `[server] state_hz`(5Hz)로 `state`.
-- 앱은 1초마다 `ping`. 비행 중 `link_timeout_s`(3초) 동안 제어 앱의 `ping`/`cmd`가 없으면 자동 착륙 + event `LINK_LOST_LANDING`.
-- 명령은 **마지막에 연결한 앱**만 가능. 다른 앱의 `cmd` → ack `BUSY`.
+- 앱은 1초마다 `ping`. 비행 중 `link_timeout_s`(3초) 동안 명령권 앱의 `ping`/`cmd`가 없으면 자동 착륙 + event `LINK_LOST_LANDING`.
+- 명령은 **명령권 앱**(마지막에 연결한 앱)만 가능. 다른 앱의 `cmd` → ack `BUSY`. 새 앱이 연결되면 그 앱이 명령권을 갖는다.
+- **명령권 넘겨받기:** 명령권 앱의 연결이 끊기면 남은 앱 중 가장 최근에 연결된 앱이 즉시 넘겨받고, 모든 앱에 event `CONTROLLER_CHANGED`.
+  비행은 계속되고, 생존 타이머(`link_timeout_s`)는 넘겨받은 순간부터 새 명령권 앱의 `ping`으로 다시 센다. 남은 앱이 없으면 `link_timeout_s` 뒤 자동 착륙.
 - `goto`: 착지 상태면 이륙부터. 이동 중 새 `goto`는 기존 이동을 취소하고 새 목표로. 이륙·착륙 중에는 `BUSY`.
 - `stop`/`land`/`emergency`는 진행 중 명령을 취소하고 바로 처리한다.
   - sim: 시뮬레이터가 진행 중 이동을 끊지 못해서, 한 구간(`[sim] segment_cm`, 약 2초)이 끝난 뒤 멈춘다. `emergency`는 즉시.
