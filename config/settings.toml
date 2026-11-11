@@ -65,3 +65,21 @@ origin_z_m = 0.0         # 지도 원점(왼쪽 아래)에 해당하는 시뮬�
 scale_cm_per_m = 100.0   # 시뮬레이터 1m가 지도 몇 cm인지
 map_x_from = "+x"        # 지도 x(오른쪽)에 대응하는 시뮬레이터 축: "+x" "-x" "+z" "-z"
 map_y_from = "+z"        # 지도 y(위쪽)에 대응하는 시뮬레이터 축
+
+# ------------------------------------------------------------
+#  중계 서버 (server/) 설정
+# ------------------------------------------------------------
+[server]
+host = "0.0.0.0"         # 0.0.0.0 = 같은 Wi-Fi의 폰에서 접속 허용
+port = 8000
+state_hz = 5             # 앱으로 state를 보내는 횟수(초당)
+
+[mock]
+# Unity 없이 순수 Python으로 흉내 내는 가짜 드론 (python run_server.py mock)
+speed_cm_s = 50                         # 수평 이동 속도
+vertical_speed_cm_s = 40                # 이착륙 속도
+takeoff_height_cm = 100                 # 이륙 직후 높이 (TT 실제 동작과 비슷하게)
+battery_start_pct = 100
+battery_drain_flying_pct_per_min = 6    # 비행 중 배터리 감소
+battery_drain_idle_pct_per_min = 0.5
+time_scale = 1.0                        # 1보다 크면 그만큼 빨리 진행 (테스트용)

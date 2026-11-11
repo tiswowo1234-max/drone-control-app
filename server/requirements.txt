@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+websockets>=12
+pytest>=8
+httpx>=0.27
+# sim 백엔드 전용 (가짜 djitellopy가 import함). 설치가 안 되면 생략해도 서버는 동작한다.
+numpy
+opencv-python
