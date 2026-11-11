@@ -57,14 +57,26 @@ rotation_deg = 29.98   # 이미지 +x축이 동쪽에서 반시계로 돈 각도
 mode = "sim"
 
 [sim_calibration]
-# 시뮬레이터 좌표(m) ↔ 지도 좌표(cm) 변환 [임시 — 시뮬레이터 실측 후 갱신]
-# 지도_cm = (sim_m - origin_m) * scale_cm_per_m, 축 대응은 아래 축 설정을 따른다
-# 시뮬레이터 화면 표시 Position: (x, y, z) m — y가 높이, x/z가 평면으로 보임 (2026-11-11 스크린샷)
-origin_x_m = 0.0         # 지도 원점(왼쪽 아래)에 해당하는 시뮬레이터 x
-origin_z_m = 0.0         # 지도 원점(왼쪽 아래)에 해당하는 시뮬레이터 z
-scale_cm_per_m = 100.0   # 시뮬레이터 1m가 지도 몇 cm인지
-map_x_from = "+x"        # 지도 x(오른쪽)에 대응하는 시뮬레이터 축: "+x" "-x" "+z" "-z"
-map_y_from = "+z"        # 지도 y(위쪽)에 대응하는 시뮬레이터 축
+# 시뮬레이터 좌표(m) ↔ 지도 좌표(cm) 변환 [확정: 2026-11-11 실측]
+# 산출 방법 (server/tools/sim_calibrate.py로 다시 계산 가능):
+#   시뮬레이터 장면(UnityProject_Data/level0)의 건물 메시 이름에 OSM way ID가 들어 있다 (예: Building_49931903_0_Roof).
+#   건물 75개의 메시 중심을 KAIST_map.osm 건물 중심과 맞춰 보니
+#     시뮬레이터 = OSM 실제 거리의 약 1/10 (0.0995), 회전 약 0.9°, **동서 거울 반전** (sim +x = 서쪽, +z = 북쪽)
+#     (잔차 평균 0.18 m, 최대 1.4 m — 시뮬레이터 m 기준, 69쌍)
+#   여기에 [geo]의 지도 네 모서리 위경도를 넣어 지도 모서리의 시뮬레이터 좌표를 구했다.
+#     sw(원점) = (19.54, -37.37), se = (-34.28, -7.36), nw = (41.07, 1.58), ne = (-12.76, 31.59)
+#   → 지도 250 cm = 시뮬레이터 61.6 m, 180 cm = 44.5 m (가로·세로 배율 차이 0.3%)
+# 변환: (a, b) = (map_x_from, map_y_from 축의 원점 기준 값)
+#        지도_x = scale·(a·cos θ + b·sin θ),  지도_y = scale·(-a·sin θ + b·cos θ),  θ = rotation_deg
+#        높이도 같은 배율: 지도 z(cm) = 시뮬레이터 높이(m) × scale  → 지도 고도 80 cm = 시뮬레이터 약 20 m
+# 주의: 지도 왼쪽 아래·왼쪽 위 모서리 근처는 시뮬레이터 바닥(±35.8 m × ±33.9 m) 밖이다.
+#       시뮬레이터 드론 시작 위치 (0, -2.5) = 지도 약 (138, 85) cm.
+origin_x_m = 19.541      # 지도 원점(왼쪽 아래)에 해당하는 시뮬레이터 x
+origin_z_m = -37.366     # 지도 원점(왼쪽 아래)에 해당하는 시뮬레이터 z
+scale_cm_per_m = 4.051   # 시뮬레이터 1m가 지도 몇 cm인지
+map_x_from = "-x"        # 회전 전 기준 축 a: 시뮬레이터 -x = 동쪽 (거울 반전 때문에 -)
+map_y_from = "+z"        # 회전 전 기준 축 b: 시뮬레이터 +z = 북쪽
+rotation_deg = 29.14     # 지도 +x가 동쪽에서 반시계로 돈 각도 (시뮬레이터 기준 실측. [geo] rotation_deg 29.98과 0.8° 차이)
 
 # ------------------------------------------------------------
 #  중계 서버 (server/) 설정
@@ -83,3 +95,29 @@ battery_start_pct = 100
 battery_drain_flying_pct_per_min = 6    # 비행 중 배터리 감소
 battery_drain_idle_pct_per_min = 0.5
 time_scale = 1.0                        # 1보다 크면 그만큼 빨리 진행 (테스트용)
+
+[sim]
+# Unity 시뮬레이터 백엔드 (python run_server.py sim) — UnityProject.exe를 먼저 켠다
+host = "127.0.0.1"
+port = 9911
+pos_source = "estimate"   # "estimate" = 명령 누적 추정(실제 드론과 같은 조건) / "sim_truth" = 시뮬레이터 참값
+speed_cm_s = 100          # go 명령 속도 (10~100, 시뮬레이터 cm/s). 시뮬레이터 세계가 커서(지도 1cm ≈ 25 시뮬 cm) 최대로
+segment_cm = 200          # 한 번에 보내는 최대 이동 거리(시뮬레이터 cm, 약 2초). 짧을수록 정지 버튼이 빨리 먹힘 (시뮬레이터는 진행 중 명령을 못 끊음)
+go_axes = "sim"           # 시뮬레이터의 go는 (a=오른쪽, b=전진) — 실제 SDK(x=전진, y=왼쪽)와 다름 [확정: 2026-11-11 실측]
+simulator_python_dir = "RoboMasterTT-Simulator beta/Python"
+auto_reset_after_emergency = true   # 비상정지 후 다음 이륙 때 시뮬레이터를 자동 리셋(드론이 시작 위치로 돌아감)
+land_descend_to_cm = 100  # 착륙 전에 시뮬레이터 높이 1 m까지 go로 먼저 내려옴 (20 m에서 바로 land하면 시간 초과)
+
+[real]
+# 실제 RoboMaster TT 백엔드 (python run_server.py real) — PC/라즈베리파이를 TT Wi-Fi에 연결
+pos_source = "estimate"   # "estimate" / "mission_pad" (조원 구현, server/README.md 참고)
+speed_cm_s = 30           # [임시] 실내 3m 공간이라 느리게
+segment_cm = 50
+go_axes = "sdk"
+
+# 미션패드 위치 (pos_source = "mission_pad"일 때). 패드 번호(mid)별 지도 좌표와 회전 [임시]
+# [[mission_pads]]
+# mid = 1
+# x_cm = 20
+# y_cm = 20
+# rot_deg = 0

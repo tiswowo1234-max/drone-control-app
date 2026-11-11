@@ -5,6 +5,7 @@ settings.toml에 없는 서버 내부용 값만 아래 기본값(DEFAULTS)을 �
 """
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,23 +61,62 @@ class TelloCfg:
     port: int = 9911              # sim 전용
     simulator_python_dir: str = "RoboMasterTT-Simulator beta/Python"  # sim 전용 (가짜 djitellopy 위치)
     auto_reset_after_emergency: bool = True  # sim 전용
+    land_descend_to_cm: float = 0.0  # 착륙 전에 이 높이(기체 cm)까지 go로 먼저 내려온다. 0이면 바로 land
 
 
 @dataclass(frozen=True)
 class SimCalibration:
+    """시뮬레이터 좌표(m) ↔ 지도 좌표(cm).
+
+    1) 시뮬레이터 평면 (x, z)에서 origin을 빼고, map_x_from/map_y_from 축을 골라 (a, b)를 만든다.
+       (거울 반전이 있으면 축 부호로 표현: 예) a = -x)
+    2) (a, b)를 rotation_deg만큼 돌리고 scale_cm_per_m을 곱하면 지도 cm.
+         map_x = scale * ( a*cos + b*sin ),  map_y = scale * ( -a*sin + b*cos )
+    높이도 같은 배율을 쓴다: 지도 z(cm) = 시뮬레이터 높이(m) * scale_cm_per_m
+    """
     origin_x_m: float = 0.0
     origin_z_m: float = 0.0
     scale_cm_per_m: float = 100.0
     map_x_from: str = "+x"
     map_y_from: str = "+z"
-    yaw_offset_deg: float = 0.0
+    rotation_deg: float = 0.0
+
+    @staticmethod
+    def _axis(spec: str) -> tuple[float, float]:
+        sign = 1.0 if spec[0] == "+" else -1.0
+        return (sign, 0.0) if spec[1] == "x" else (0.0, sign)
+
+    def matrix(self) -> tuple[tuple[float, float], tuple[float, float]]:
+        """시뮬레이터 (dx, dz) m → 지도 (dx, dy) cm 선형 변환 2x2."""
+        ax, bx = self._axis(self.map_x_from), self._axis(self.map_y_from)
+        c, s = math.cos(math.radians(self.rotation_deg)), math.sin(math.radians(self.rotation_deg))
+        k = self.scale_cm_per_m
+        r0 = (k * (c * ax[0] + s * bx[0]), k * (c * ax[1] + s * bx[1]))
+        r1 = (k * (-s * ax[0] + c * bx[0]), k * (-s * ax[1] + c * bx[1]))
+        return r0, r1
+
+    def sim_delta_to_map(self, dx_m: float, dz_m: float) -> tuple[float, float]:
+        r0, r1 = self.matrix()
+        return r0[0] * dx_m + r0[1] * dz_m, r1[0] * dx_m + r1[1] * dz_m
+
+    def map_delta_to_sim(self, dx_cm: float, dy_cm: float) -> tuple[float, float]:
+        (a, b), (c, d) = self.matrix()
+        det = a * d - b * c
+        return (d * dx_cm - b * dy_cm) / det, (-c * dx_cm + a * dy_cm) / det
 
     def sim_to_map(self, sx: float, sz: float) -> tuple[float, float]:
         """시뮬레이터 평면 좌표(m) → 지도 cm."""
-        def axis(spec: str) -> float:
-            v = sx - self.origin_x_m if spec[1] == "x" else sz - self.origin_z_m
-            return v if spec[0] == "+" else -v
-        return axis(self.map_x_from) * self.scale_cm_per_m, axis(self.map_y_from) * self.scale_cm_per_m
+        return self.sim_delta_to_map(sx - self.origin_x_m, sz - self.origin_z_m)
+
+    def map_to_sim(self, x_cm: float, y_cm: float) -> tuple[float, float]:
+        dx, dz = self.map_delta_to_sim(x_cm, y_cm)
+        return dx + self.origin_x_m, dz + self.origin_z_m
+
+    def sim_yaw_to_map(self, yaw_deg: float) -> float:
+        """시뮬레이터 yaw(+z가 0, 시계방향 +) → 지도 yaw(지도 위쪽 0, 시계방향 +)."""
+        r = math.radians(yaw_deg)
+        mx, my = self.sim_delta_to_map(math.sin(r), math.cos(r))
+        return math.degrees(math.atan2(mx, my))
 
 
 @dataclass(frozen=True)
@@ -111,12 +151,19 @@ def _sub(cls, table: dict[str, Any] | None, base=None):
 def _geo(table: dict[str, Any] | None) -> dict[str, Any] | None:
     if not table:
         return None
+    """[geo] → config.geo. 명세의 sw/ne에 더해, 있으면 se/nw(이미지 기준 네 모서리)와
+    rotation_deg도 보낸다 — 지도가 30° 회전돼 있어 쌍선형 보간에 네 모서리가 필요하다."""
     try:
-        return {
-            "sw": {"lat": float(table["sw_lat"]), "lon": float(table["sw_lon"])},
-            "ne": {"lat": float(table["ne_lat"]), "lon": float(table["ne_lon"])},
-        }
-    except (KeyError, TypeError, ValueError):
+        geo: dict[str, Any] = {}
+        for corner in ("sw", "se", "nw", "ne"):
+            if f"{corner}_lat" in table and f"{corner}_lon" in table:
+                geo[corner] = {"lat": float(table[f"{corner}_lat"]), "lon": float(table[f"{corner}_lon"])}
+        if "sw" not in geo or "ne" not in geo:
+            return None
+        if "rotation_deg" in table:
+            geo["rotation_deg"] = float(table["rotation_deg"])
+        return geo
+    except (TypeError, ValueError):
         return None
 
 
