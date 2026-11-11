@@ -18,7 +18,8 @@
 5. [위치 추정 코드 → 서버: `POST /vision/pose`](#5-위치-추정-코드--서버-post-visionpose)
 6. [조원이 정해야 할 것 / 미정 사항 / 알려진 한계](#6-조원이-정해야-할-것--미정-사항--알려진-한계)
 7. [드론 없이 빠르게 시험하기](#7-드론-없이-빠르게-시험하기)
-8. [부록: 설정값 한눈에 보기](#8-부록-설정값-한눈에-보기)
+8. [내 컴퓨터에서 서버 직접 돌려 보기 (Windows / macOS / Linux·라즈베리파이)](#8-내-컴퓨터에서-서버-직접-돌려-보기-windows--macos--linux라즈베리파이)
+9. [부록: 설정값 한눈에 보기](#9-부록-설정값-한눈에-보기)
 
 ---
 
@@ -518,19 +519,18 @@ print(send_pose(x, y, confidence=0.9, ts=t_photo))
 
 ## 7. 드론 없이 빠르게 시험하기
 
-드론·Unity 없이 **가짜 드론(mock) + 가짜 위치 송신 + 앱**으로 연동 형식을 확인한다. (Windows PC 기준. 라즈베리파이는 `.venv/bin/python`으로 바꿔 읽으면 된다.)
+드론·Unity 없이 **가짜 드론(mock) + 가짜 위치 송신 + 앱**으로 연동 형식을 확인한다.
+아래는 Windows 기준 요약이다. **처음 설치하는 방법과 macOS/Linux·라즈베리파이 명령은 8장**에 단계별로 있다.
 
-**① 서버 켜기 (vision 입력 켬)** — PowerShell 창 1
+**① 서버 켜기 (vision 입력 켬)** — PowerShell 창 1 (`조원공유\server` 폴더에서)
 ```
-cd C:\dev\drone-control-app\server
 .\run_server.bat mock --vision
 ```
 화면에 `위치 입력(vision) 켜짐: POST http://<이 PC IP>:8000/vision/pose`가 나오면 준비 완료.
 (처음 실행이면 가상환경을 만드느라 1~2분 걸린다. 방화벽 창이 뜨면 "개인 네트워크" 허용.)
 
-**② 가짜 위치 보내기** — PowerShell 창 2
+**② 가짜 위치 보내기** — PowerShell 창 2 (`조원공유\server` 폴더에서)
 ```
-cd C:\dev\drone-control-app\server
 .venv\Scripts\python.exe tools\fake_vision.py --pattern circle
 ```
 - `[1] (1.750, 1.250) m → 서버 수신 OK` 처럼 나오면 서버가 받은 것이다.
@@ -543,17 +543,166 @@ cd C:\dev\drone-control-app\server
 
 **③ 확인**
 - 브라우저 `http://127.0.0.1:8000/` → `"vision": {"enabled": true, "last_age_s": 0.1...}`, `"pos_source": "vision"`
-- 앱(또는 `flutter run -d edge`)을 `ws://<PC IP>:8000/ws`로 연결 → 지도 위 드론 아이콘이 원을 그리며 움직이고 위치 출처가 "카메라"(초록)로 표시
+- 폰 앱(`경비드론.apk`, 8.7)을 `ws://<PC IP>:8000/ws`로 연결 → 지도 위 드론 아이콘이 원을 그리며 움직이고 위치 출처가 "카메라"(초록)로 표시
 - 창 2를 `Ctrl+C`로 끄면 약 1초 뒤 `pos_source`가 `estimate`(주황)로 바뀌고 마지막 위치에 멈춘다
 - 앱 없이 명령 흐름만 보려면 창 3에서 `.venv\Scripts\python.exe tools\ws_check.py` (goto → 귀환 → 착륙까지 출력)
 
 **④ 조원 코드 연결**: ②의 `fake_vision.py` 대신 조원의 위치 추정 코드가 같은 주소로 보내면 된다 (5.6 예시).
 
-다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision`. 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (`server/README.md` 7장).
+다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision` (8.5). 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (8.6, `server/README.md` 7장).
 
 ---
 
-## 8. 부록: 설정값 한눈에 보기 (`config/settings.toml`)
+## 8. 내 컴퓨터에서 서버 직접 돌려 보기 (Windows / macOS / Linux·라즈베리파이)
+
+받은 압축 파일만으로 조원 PC에서 중계 서버를 켜고, 가짜 위치를 보내고, 폰 앱을 붙여 보는 방법이다.
+명령 앞의 `>`나 `$`는 입력하지 않는다. 각 명령은 근거 파일을 확인한 실제 파일·옵션만 썼다.
+
+### 8.1 압축 파일 구조 — 폴더 구조를 바꾸지 말 것
+```
+조원공유/
+  먼저_읽어주세요.txt
+  docs/teammate/interface.md   ← 이 문서
+  docs/api.md                  ← 앱⇄서버 명세
+  server/                      ← 중계 서버 (Python)
+  config/settings.toml         ← 서버 설정 (지도 크기, 고도 제한, 포트 …)
+  경비드론.apk                 ← 안드로이드 앱
+```
+- 서버는 설정 파일을 **`server` 폴더의 한 단계 위 폴더 기준 `config/settings.toml`**에서 읽는다 (`server/drone_server/settings.py:14-15`).
+  그래서 `server/`와 `config/`가 **같은 부모 폴더(`조원공유/`) 안에** 있어야 한다. `server`만 따로 옮기면 설정 파일을 못 찾는다.
+  다른 위치의 설정을 쓰려면 `--config <settings.toml 경로>` 옵션을 쓴다 (`server/run_server.py:45`).
+- 아래 명령은 모두 **`조원공유/server` 폴더 안에서** 실행한다.
+
+### 8.2 Python 준비 — **3.11 이상** 필요
+- 서버가 TOML 읽기에 Python 3.11부터 들어 있는 `tomllib`를 쓰므로 **3.10 이하는 시작하자마자 실패**한다 (`server/drone_server/settings.py:9`).
+- 권장: **3.12 또는 3.13**. 사용자 PC는 3.14로 시험했고 테스트 70개가 통과했다 (2026-11-11).
+- `requirements.txt`의 `numpy`, `opencv-python`은 **sim 모드 전용**이다. 설치가 안 되면 빼고 설치해도 mock·real은 동작한다(8.3의 ⚠ 참고). sim 모드도 두 패키지가 없으면 서버가 빈 모듈로 대신해 제어는 된다 (`server/drone_server/backends/sim.py:28-34`).
+
+| OS | 설치 | 확인 |
+|---|---|---|
+| Windows | https://www.python.org/downloads/ 에서 3.12/3.13 설치. 설치 첫 화면에서 **"Add python.exe to PATH" 체크** (`py` 실행기도 함께 설치됨) | PowerShell에서 `py -0` (설치된 버전 목록), `py -3.13 --version` |
+| macOS | python.org 설치 파일, 또는 Homebrew `brew install python@3.13` | 터미널에서 `python3 --version` |
+| Linux / 라즈베리파이 | Raspberry Pi OS **Bookworm** 이상은 기본 Python 3.11 → 그대로 사용. (Bullseye는 3.9라 안 됨 → OS 업데이트 필요) `sudo apt install python3-venv` | `python3 --version` |
+
+### 8.3 처음 한 번: 가상환경 만들고 패키지 설치
+
+**Windows** — 가장 쉬운 방법: `server` 폴더에서 `run_server.bat`을 쓰면 **처음 실행할 때 가상환경(`.venv`) 생성과 설치를 자동으로** 한다.
+`run_server.bat`은 `py -3.14`로 만들고, 없으면 `py -3`(설치된 최신 버전)으로 만든 뒤 `pip install -r requirements.txt`를 한다 (`server/run_server.bat:6-10`).
+직접 하려면 (PowerShell, `조원공유\server`에서):
+```
+py -3.13 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+**macOS / Linux / 라즈베리파이** (터미널, `조원공유/server`에서). `run_server.bat`은 Windows 전용이라 직접 만든다:
+```
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+⚠ `opencv-python`/`numpy` 설치가 실패하거나 너무 오래 걸리면(32비트 라즈베리파이 등) 필요한 것만 설치한다:
+```
+.venv/bin/python -m pip install "fastapi>=0.110" "uvicorn[standard]>=0.29" "websockets>=12" "pytest>=8" "httpx>=0.27"
+```
+(Windows는 `.venv/bin/python` 대신 `.venv\Scripts\python.exe`)
+
+### 8.4 서버 실행 (mock / mock --vision)
+| 하고 싶은 것 | Windows (PowerShell) | macOS / Linux |
+|---|---|---|
+| 가짜 드론 | `.\run_server.bat mock` | `.venv/bin/python run_server.py mock` |
+| 가짜 드론 + 카메라 위치 입력 | `.\run_server.bat mock --vision` | `.venv/bin/python run_server.py mock --vision` |
+| 설정 파일 값대로 (`[backend] mode`, 현재 `"sim"`) | `.\run_server.bat` | `.venv/bin/python run_server.py` |
+| 다른 포트 | `.\run_server.bat mock --port 8001` | `.venv/bin/python run_server.py mock --port 8001` |
+
+- `run_server.bat`은 인자를 그대로 `run_server.py`에 넘긴다 (`server/run_server.bat:11`). 옵션: 백엔드 `mock|sim|real`, `--vision`, `--config`, `--host`, `--port` (`server/run_server.py:43-49`).
+- 켜지면 이런 안내가 나온다 (`server/run_server.py:66-76`). **"앱에 입력할 주소"**를 폰 앱에 넣는다(8.7).
+  ```
+  ============================================================
+   드론 중계 서버  backend=mock
+   설정 파일: .../조원공유/config/settings.toml
+   앱에 입력할 주소:
+     ws://192.168.0.23:8000/ws
+   확인용(브라우저): http://127.0.0.1:8000/
+   위치 입력(vision) 켜짐: POST http://<이 PC IP>:8000/vision/pose  (tools/fake_vision.py로 시험)
+   끄려면 이 창에서 Ctrl+C
+  ============================================================
+  ```
+- **확인**: 같은 PC 브라우저에서 `http://127.0.0.1:8000/` → `{"ok": true, "api_version": "0.6", "backend": "mock", ..., "vision": {"enabled": true, ...}}`가 보이면 정상 (`server/drone_server/app.py:130-140`).
+- **끄기**: 서버 창에서 `Ctrl+C`. 2~4초 안에 꺼진다 (`server/drone_server/serve.py:23-24`). Windows `run_server.bat`은 끈 뒤 "아무 키나 누르십시오"에서 한 번 더 키를 누르면 창이 닫힌다 (`pause`).
+
+### 8.5 가짜 위치 보내기 / 앱 없이 명령 흐름 확인 / 테스트
+서버를 켠 채로 **창을 하나 더** 열고 `조원공유/server`에서:
+
+| 하고 싶은 것 | Windows | macOS / Linux |
+|---|---|---|
+| 가짜 위치 송신 (원 그리기) | `.venv\Scripts\python.exe tools\fake_vision.py --pattern circle` | `.venv/bin/python tools/fake_vision.py --pattern circle` |
+| 다른 PC의 서버로 송신 | `... tools\fake_vision.py --url http://192.168.0.23:8000` | `... tools/fake_vision.py --url http://192.168.0.23:8000` |
+| 앱 없이 명령 흐름 확인 (goto → 귀환 → 착륙) | `.venv\Scripts\python.exe tools\ws_check.py` | `.venv/bin/python tools/ws_check.py` |
+| 자동 테스트 (서버를 켜지 않아도 됨) | `.venv\Scripts\python.exe -m pytest -q` | `.venv/bin/python -m pytest -q` |
+
+- `fake_vision.py` 옵션은 7장 ②, 형식은 5장. 표준 라이브러리만 써서 가상환경 없이 `python3 tools/fake_vision.py`로도 돌아간다 (`server/tools/fake_vision.py:3`).
+- 서버를 `--vision` 없이 켰으면 `fake_vision.py`는 `형식 오류 또는 서버 vision 꺼짐`을 출력한다 (5.2 `BAD_REQUEST`).
+- `ws_check.py` 기본 주소는 `ws://127.0.0.1:8000/ws`, 바꾸려면 `--url` (`server/tools/ws_check.py:22`).
+- 테스트는 `pytest`로 약 30초, 끝에 `70 passed`(2026-11-11 기준)가 나오면 정상. 일부 테스트는 `config/settings.toml` 값을 읽으므로 설정을 많이 바꾸면 실패할 수 있다 (`server/tests/test_safety.py:67`, `server/tests/test_tello_backend.py:86`).
+
+### 8.6 sim / real 모드
+
+**sim (Unity 시뮬레이터)**
+1. 조원의 `UnityProject.exe`를 먼저 켠다 (왼쪽 위 `Mode: Grounded`). 서버는 `127.0.0.1:9911`로 붙는다 (`config/settings.toml` `[sim] host`, `port`).
+2. 서버는 시뮬레이터용 **가짜 djitellopy**를 `<조원공유>/<[sim] simulator_python_dir>/simulated/djitellopy`에서 찾는다 (`server/drone_server/backends/sim.py:22-37`, `settings.toml`의 `[sim] simulator_python_dir`).
+   기본값은 `"RoboMasterTT-Simulator beta/Python"`라서, 압축 파일에는 이 폴더가 없으므로 **둘 중 하나**를 한다:
+   - (a) 시뮬레이터 폴더를 `조원공유/RoboMasterTT-Simulator beta/`로 복사한다 (그 안에 `Python/simulated/djitellopy/`가 있어야 함), 또는
+   - (b) `config/settings.toml`의 `[sim]`에 **절대 경로**를 쓴다 (절대 경로면 `조원공유` 기준이 무시된다):
+     ```toml
+     [sim]
+     simulator_python_dir = "D:/sim/RoboMasterTT-Simulator beta/Python"   # 예시. 이 아래에 simulated/djitellopy/ 가 있어야 함
+     ```
+   못 찾으면 서버가 `가짜 djitellopy를 찾을 수 없습니다: <경로>`로 멈춘다 (`backends/sim.py:24-25`).
+3. 실행: Windows `.\run_server.bat sim` (카메라 위치 입력까지: `sim --vision`), macOS/Linux `.venv/bin/python run_server.py sim`
+4. 주의: `[sim_calibration]`(시뮬레이터↔지도 좌표 변환)은 **현재 시뮬레이터 빌드(동서 반전 상태)** 기준이다. 시뮬레이터 지도를 고친 빌드를 쓰면 위치가 맞지 않는다 → 알려 주면 이쪽에서 다시 계산한다(`server/tools/sim_calibrate.py`).
+   (진짜 `djitellopy`가 같은 가상환경에 설치돼 있어도 괜찮다. 서버가 가짜 쪽 경로를 맨 앞에 넣고 불러온 뒤, 다른 것이 불려 오면 멈춰서 알려 준다 — `backends/sim.py:26-27`, `35-36`.)
+
+**real (실제 RoboMaster TT)** — **아직 실기체로 검증하지 않았다** (6.2 A)
+1. 진짜 djitellopy 설치: Windows `.venv\Scripts\python.exe -m pip install djitellopy`, macOS/Linux `.venv/bin/python -m pip install djitellopy` (`server/drone_server/backends/real.py:38-41`)
+2. 이 PC(라즈베리파이)를 **TT의 Wi-Fi에 연결**. 앱도 붙이려면 폰과 통하는 두 번째 네트워크(두 번째 Wi-Fi 어댑터, 유선 등)가 필요하다 (6.1 #6).
+3. 드론을 정문(home)에 **지도 위쪽을 보게** 놓고 켠다 (2.3).
+4. 실행: `run_server.py real` (카메라 위치 입력까지: `real --vision`). Windows는 `.\run_server.bat real`.
+5. 처음엔 프로펠러 가드, 낮은 `max_alt_cm`, 짧은 거리로.
+
+### 8.7 폰 앱(APK)으로 내 PC 서버에 붙기
+1. 안드로이드 폰에 `경비드론.apk`를 설치한다 (설치 중 "출처를 알 수 없는 앱" 허용 필요).
+2. **폰과 PC를 같은 네트워크**에 연결한다. 학교 Wi-Fi는 기기끼리 막혀 있을 수 있으므로 **휴대폰 핫스팟이나 개인 공유기** 권장. (핫스팟을 켠 폰 자신도 앱을 쓸 수 있다.)
+3. 서버를 켜고 창의 **"앱에 입력할 주소"**(`ws://192.168.x.x:8000/ws`)를 확인한다. 주소가 여러 개면 폰과 같은 네트워크 대역(예: 핫스팟이면 보통 `192.168.43.x`, `172.20.10.x` 등) 것을 고른다.
+4. 앱 오른쪽 위 **⚙(서버 주소 설정)**을 눌러 그 주소(또는 IP만, 예: `192.168.0.23`)를 입력한다. 앱 기본값은 `ws://127.0.0.1:8000/ws`라 처음엔 반드시 바꿔야 한다 (`app/lib/server_address.dart:8`).
+5. 연결되면 지도 위에 드론 위치와 상태가 나온다. 안 되면 폰 브라우저로 `http://<PC IP>:8000/`이 열리는지 먼저 확인한다 → 안 열리면 방화벽 또는 네트워크 문제 (8.8).
+
+### 8.8 흔한 문제 해결
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'tomllib'` | Python 3.10 이하 | 3.11 이상 설치 후 `.venv` 폴더를 지우고 8.3부터 다시. Windows `run_server.bat`은 `py -3`(최신 설치 버전)을 쓰므로 `py -0`으로 3.11 이상이 있는지 확인 |
+| `ModuleNotFoundError: No module named 'fastapi'` 등 | 패키지 미설치 / 가상환경 밖 Python으로 실행 | 8.3 설치, 실행은 꼭 `.venv` 안의 Python으로 |
+| 시작 시 `address already in use` / `[Errno 10048]` / `[Errno 48]` | 포트 8000을 다른 프로그램(이전에 켠 서버 등)이 사용 중 | 아래 "포트 8000" 참고, 또는 `--port 8001`로 켜고 앱·`fake_vision.py --url`도 8001로 |
+| 폰 앱이 연결 안 됨, 폰 브라우저로 `http://<PC IP>:8000/`도 안 열림 | 방화벽 / 다른 네트워크 | Windows: 처음 실행 때 뜨는 방화벽 창에서 **"개인 네트워크" 허용**. 놓쳤으면 Windows 보안 → 방화벽 → "방화벽을 통해 앱 허용"에서 Python 허용. 핫스팟/공유기 네트워크 프로필이 "공용"이면 "개인"으로 바꾼다. macOS: "들어오는 연결 허용" 창에서 허용 (시스템 설정 → 네트워크 → 방화벽). 폰과 PC가 같은 Wi-Fi인지 확인 |
+| 서버 창에 앱 주소가 `<이 PC의 IP>`로만 나옴 | 네트워크 연결 없음 | Wi-Fi 연결 후 다시 실행 |
+| sim에서 `가짜 djitellopy를 찾을 수 없습니다` | 시뮬레이터 Python 폴더 경로 | 8.6 sim 2단계 |
+| `fake_vision.py`가 `서버에 연결 안 됨` | 서버 꺼짐 / 주소·포트 틀림 | 서버 창 확인, `--url` 확인 |
+
+**포트 8000을 쓰는 프로그램 찾아 끄기**
+- Windows (PowerShell):
+  ```
+  netstat -ano | findstr :8000
+  taskkill /PID <마지막 열의 번호> /F
+  ```
+- macOS / Linux:
+  ```
+  lsof -i :8000
+  kill <PID 열의 번호>
+  ```
+  (라즈베리파이에 `lsof`가 없으면 `sudo ss -ltnp | grep :8000`)
+
+---
+
+## 9. 부록: 설정값 한눈에 보기 (`config/settings.toml`)
 | 키 | 값 | 상태 | 뜻 |
 |---|---|---|---|
 | `[map] width_cm / height_cm` | 250 / 250 | 확정 | 지도 크기 |
