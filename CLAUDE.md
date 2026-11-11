@@ -42,6 +42,16 @@
 - 프로젝트 정보와 결정 사항은 이 파일에 기록하고, git으로 단계마다 커밋한다.
 - 사용자와는 한국어로 소통한다.
 
+## 세션 분담 (2026-11-11~, 같은 폴더 공유)
+| 세션 | 담당 파일 |
+|---|---|
+| 메인 | `CLAUDE.md`, `docs/`, `app/android/`, `.claude/`, 통합·APK 빌드 |
+| relay-server | `server/`, `config/settings.toml`(`[geo]` 제외) |
+| app-features | `app/lib/`, `app/test/`, `app/pubspec.*` |
+| map-georef | `tools/`(`pdf_to_png.py` 제외), `config/settings.toml`의 `[geo]` |
+- 각 세션은 자기 경로만 `git add`로 커밋하고(`git add -A` 금지), 브랜치를 바꾸지 않는다.
+- 명세(`docs/api.md`) 변경은 메인 세션이 한다. 다른 세션은 변경 제안만 보고한다.
+
 ## 조정 가능한 값
 - 지도 크기, home, 고도·반경 제한, 위도·경도 기준점, 시뮬레이터↔지도 좌표 변환은 모두 **`config/settings.toml`** 한 곳에서 관리한다.
 - 각 값에 `[임시]`/`[확정]` 표시를 남긴다. 실제 환경이 확정되면 이 파일만 수정하고, 코드에 숫자를 직접 쓰지 않는다.
