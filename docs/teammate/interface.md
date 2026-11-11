@@ -1,13 +1,12 @@
 # 송수신 데이터 형식 — 라즈베리파이 담당 조원용
 
 > 대상: 라즈베리파이 쪽 드론 제어와 카메라 위치 추정을 맡은 조원 (이 앱·서버 코드를 처음 보는 사람)
-> 작성: 2026-11-11 · 기준: 앱⇄서버 명세 `docs/api.md` **v0.4**, 서버 코드 `server/drone_server/` (2026-11-11 작업본)
+> 작성: 2026-11-11 · 기준: 앱⇄서버 명세 `docs/api.md` **v0.4**, 서버 코드 `server/drone_server/` (커밋 `79b4f36`)
 > 이 문서는 **연동 형식을 맞추기 위한 공유용**이다. 바꾸고 싶은 점이 있으면 말해 주세요. 정식 명세는 `docs/api.md`가 기준이다.
 
 근거 표기: `controller.py:212`는 `server/drone_server/controller.py`의 212번째 줄이다. (`backends/tello.py`도 `server/drone_server/` 아래)
 
-> ⚠️ **구현 확인 필요 표시**: 5장의 `POST /vision/pose`와 `server/tools/fake_vision.py`는 서버 담당 세션이 지금 마무리 중이다.
-> 이 문서는 작업 중인 코드(아직 git 커밋 전)를 읽고 썼으므로, 커밋 뒤 줄 번호가 조금 달라질 수 있다.
+> 5장의 `POST /vision/pose`와 `server/tools/fake_vision.py`는 서버 커밋 `79b4f36`에서 구현됐다. 서버 코드가 바뀌면 줄 번호가 조금 달라질 수 있다.
 
 ---
 
@@ -86,7 +85,7 @@ flowchart LR
 
 ### 2.3 실제 드론의 방향 가정
 - TT에는 GPS가 없어서 서버는 "지금 위치 → 목표" 차이를 **드론 기준 상대 이동**(`go`)으로 바꿔 보낸다.
-- 이때 **드론을 home(정문)에 지도 위쪽(+y)을 보게 놓고 켠다**고 가정한다. 즉 TT 센서 yaw 0° = 지도 위쪽 (`positioning.py:27`, `server/README.md` 6장).
+- 이때 **드론을 home(정문)에 지도 위쪽(+y)을 보게 놓고 켠다**고 가정한다. 즉 TT 센서 yaw 0° = 지도 위쪽 (`positioning.py:27`, `server/README.md` 7장).
 - 이동 계산에 쓰는 방향은 TT 센서의 `yaw`이다 (`backends/tello.py:227`). 위치 추정에서 보낸 `yaw_deg`는 앱 화면 표시에만 쓰인다 (5.4 참고).
 
 ---
@@ -391,7 +390,7 @@ emergency     ← 모터 즉시 정지
 
 ## 5. 위치 추정 코드 → 서버: `POST /vision/pose`
 
-> ⚠️ **구현 확인 필요**: 서버 담당 세션이 구현 중이며 아래는 작업 중 코드(`app.py:139-175`, `positioning.py:145-207`, `server/tools/fake_vision.py`) 기준이다. 아직 git에 커밋되지 않았다.
+> 구현: 서버 커밋 `79b4f36` (`app.py:139-175`, `positioning.py:145-207`, `server/tools/fake_vision.py`). 서버 쪽 사용법은 `server/README.md` 3장.
 
 ### 5.1 보내는 형식
 ```
@@ -492,11 +491,11 @@ print(send_pose(x, y, confidence=0.9, ts=t_photo))
 | 3 | **보내는 필드** (yaw, confidence, ts 포함 여부) | 선택 필드로 열어 둠 | confidence를 보내면 `min_confidence`로 거를 수 있음 | 5.1 |
 | 4 | **카메라 종류** | 미정: TT 전방 카메라 / TT 하방 카메라(`downvision`) / 별도 카메라 | TT 카메라면 영상 스트림을 서버 쪽 TT 연결과 함께 써야 함 (아래 7번) | `CLAUDE.md` |
 | 5 | **위치 추정 코드 실행 위치** | 미정. 같은 라즈베리파이 권장 (`127.0.0.1`) | 다른 기기면 서버 IP, 방화벽, 시계 차이 고려 | 5.1 |
-| 6 | **라즈베리파이 네트워크** | TT Wi-Fi(드론 AP) + 폰 핫스팟, Wi-Fi 2개 또는 유선 필요 | 서버는 TT와 앱 양쪽에 동시에 닿아야 함 | `server/README.md` 6장 |
+| 6 | **라즈베리파이 네트워크** | TT Wi-Fi(드론 AP) + 폰 핫스팟, Wi-Fi 2개 또는 유선 필요 | 서버는 TT와 앱 양쪽에 동시에 닿아야 함 | `server/README.md` 7장 |
 | 7 | **TT 연결 공유** | 서버가 TT SDK(UDP 8889, 상태 8890)를 쓰고 있음 | TT 카메라 영상(`streamon`, UDP 11111)을 위치 추정 코드가 직접 열면 서버와 충돌할 수 있음 → 누가 `streamon`을 보낼지 정해야 함 | `backends/real.py` |
-| 8 | **미션패드 병행** | 서버에 단순 버전 있음 (`pos_source = "mission_pad"`), 미검증 | 카메라 추정과 함께 쓸지, 대체로 쓸지 | `positioning.py` MissionPadProvider, `server/README.md` 6장 |
+| 8 | **미션패드 병행** | 서버에 단순 버전 있음 (`pos_source = "mission_pad"`), 미검증 | 카메라 추정과 함께 쓸지, 대체로 쓸지 | `positioning.py` MissionPadProvider, `server/README.md` 7장 |
 | 9 | **드론 시작 자세** | 서버는 "home(정문)에 지도 위쪽을 보게 놓고 켬"을 가정 | 이 가정이 틀리면 첫 이동 방향이 틀어짐. 카메라로 처음 위치·방향을 잡을 수 있는지 | 2.3 |
-| 10 | **real 백엔드** | **실기체로 한 번도 검증 안 됨** | 처음엔 프로펠러 가드, 낮은 고도, 짧은 거리로. `stop`이 진행 중 `go`를 실제로 끊는지, `go` 응답 시간 확인 필요 | `server/README.md` 6장, `backends/real.py:1-7` |
+| 10 | **real 백엔드** | **실기체로 한 번도 검증 안 됨** | 처음엔 프로펠러 가드, 낮은 고도, 짧은 거리로. `stop`이 진행 중 `go`를 실제로 끊는지, `go` 응답 시간 확인 필요 | `server/README.md` 7장, `backends/real.py:1-7` |
 | 11 | **속도·구간·도착 허용 오차** | speed 30cm/s, 구간 50cm, 도착 판정 각 축 20cm 미만 [임시] | 2.5m 지도에서 20cm 오차가 괜찮은지 | `settings.toml:119-120`, `backends/tello.py:25` |
 | 12 | **TT 자동 착륙 감지** | real은 비행 여부를 명령 기록으로만 판단 | 저전압 자동 착륙 시 앱에는 계속 "비행 중"으로 보일 수 있음. TT 상태의 `tof`/`h`로 판단하자는 제안 가능 | 3.2 |
 | 13 | **천장 높이 / 고도 제한** | 50~150cm, 기본 80cm [임시] | 하방 카메라 사용 시 고도에 따라 시야가 바뀜 | `settings.toml:25-27` |
@@ -536,7 +535,7 @@ cd C:\dev\drone-control-app\server
 
 **④ 조원 코드 연결**: ②의 `fake_vision.py` 대신 조원의 위치 추정 코드가 같은 주소로 보내면 된다 (5.6 예시).
 
-다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision`. 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (`server/README.md` 6장).
+다음 단계(시뮬레이터): Unity `UnityProject.exe`를 켜고 `.\run_server.bat sim --vision`. 실제 드론: 라즈베리파이에서 `run_server.py real --vision` (`server/README.md` 7장).
 
 ---
 
