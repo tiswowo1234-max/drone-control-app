@@ -224,6 +224,17 @@ void main() {
           (127.3607256 + 127.3667053 + 127.3582399 + 127.3642196) / 4);
     });
 
+    test('기본값(최종 지도): 정문 (153.2, 70.2)cm → map-georef 산출 위경도', () {
+      const c = AppConfig.fallback;
+      expect(c.mapWidthCm, 250);
+      expect(c.mapHeightCm, 250);
+      expect(c.home, const Offset(153.2, 70.2));
+      final p = cmToLatLon(c, c.home);
+      // 네 모서리 쌍선형 보간과 map-georef의 직접 변환 값 차이는 경도 약 1.3e-6°(≈0.12 m)
+      expect(p.lat, closeTo(36.3658066, 2e-6));
+      expect(p.lon, closeTo(127.3637787, 2e-6));
+    });
+
     test('geo가 없거나 null이면 기본값(settings.toml과 같은 네 모서리)', () {
       final c = AppConfig.fromJson({'type': 'config', 'geo': null});
       expect(c.geo.seLat, AppConfig.fallback.geo.seLat);
