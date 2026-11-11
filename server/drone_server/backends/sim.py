@@ -14,7 +14,7 @@ import types
 from typing import Any
 
 from ..models import Pose
-from ..positioning import DeadReckoningProvider, SimFrame, SimTruthProvider
+from ..positioning import DeadReckoningProvider, SimFrame, SimTruthProvider, VisionProvider
 from ..settings import REPO_ROOT, Settings
 from .tello import TelloBackend
 
@@ -59,8 +59,10 @@ def create_sim_backend(settings: Settings) -> SimBackend:
         provider = SimTruthProvider(calib)
     elif cfg.pos_source == "estimate":
         provider = DeadReckoningProvider(home, frame=SimFrame(calib))
+    elif cfg.pos_source == "vision":
+        provider = VisionProvider(DeadReckoningProvider(home, frame=SimFrame(calib)), settings.vision.stale_s)
     else:
-        raise ValueError(f"[sim] pos_source는 estimate 또는 sim_truth: {cfg.pos_source!r}")
+        raise ValueError(f"[sim] pos_source는 estimate | sim_truth | vision: {cfg.pos_source!r}")
 
     def make() -> Any:
         return dji.Tello(host=cfg.host, command_port=cfg.port)

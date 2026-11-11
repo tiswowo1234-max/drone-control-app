@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from ..models import BackendError, Pose, Telemetry
-from ..positioning import DroneFrame, PositionProvider
+from ..positioning import DroneFrame, PositionProvider, VisionProvider
 from ..settings import TelloCfg
 from .base import DroneBackend
 
@@ -77,6 +77,7 @@ class TelloBackend(DroneBackend):
         frame:              기체 세계 ↔ 지도 좌표 변환 (기본: 항등 = 실제 드론)
         """
         self.frame = frame or DroneFrame()
+        self.vision = provider if isinstance(provider, VisionProvider) else None
         self.name = name
         self.cfg = cfg
         self.provider = provider

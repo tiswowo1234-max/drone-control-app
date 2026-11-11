@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 from .models import Pose
 from .settings import SimCalibration
@@ -139,6 +140,71 @@ class SimTruthProvider(PositionProvider):
         z = self.frame.alt_to_map(float(raw.get("h", 0.0)))
         yaw = normalize_yaw(self.frame.yaw_to_map(float(raw.get("yaw", 0.0))))
         self._pose = Pose(x, y, z, yaw)
+
+
+class VisionProvider(PositionProvider):
+    """카메라 위치 추정(조원 코드) 값을 쓰는 공급자 — docs/api.md 7장.
+
+    - POST /vision/pose로 받은 값(submit)이 stale_s초 이내면 그 위치 (source = "vision").
+    - 오래되면 fallback(명령 누적 추정 등)으로 이어 간다 (source = fallback.source, 보통 "estimate").
+    - 새 값이 올 때마다 fallback의 기준점도 그 위치로 맞춘다 → 끊겨도 마지막 vision 위치에서 이어진다.
+    - yaw가 없으면 fallback(드론 센서) yaw, 높이는 항상 fallback(센서 h).
+    """
+
+    def __init__(self, fallback: PositionProvider, stale_s: float = 1.0,
+                 clock: Callable[[], float] | None = None):
+        self.fallback = fallback
+        self.stale_s = stale_s
+        self._clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._fix: tuple[float, float, float | None] | None = None  # (x_cm, y_cm, yaw|None)
+        self._fix_at: float | None = None
+        self._last_ts: float | None = None
+
+    def submit(self, x_cm: float, y_cm: float, yaw_deg: float | None = None, ts: float | None = None) -> bool:
+        """새 추정값. ts가 이전 값보다 오래된(순서가 뒤바뀐) 값이면 무시하고 False."""
+        with self._lock:
+            if ts is not None and self._last_ts is not None and ts < self._last_ts:
+                return False
+            if ts is not None:
+                self._last_ts = ts
+            self._fix = (x_cm, y_cm, yaw_deg)
+            self._fix_at = self._clock()
+        fb = self.fallback.pose()
+        z = fb.z_cm if fb else 0.0
+        yaw = yaw_deg if yaw_deg is not None else (fb.yaw_deg if fb else 0.0)
+        self.fallback.reset(Pose(x_cm, y_cm, z, yaw))
+        return True
+
+    def age_s(self) -> float | None:
+        with self._lock:
+            return None if self._fix_at is None else self._clock() - self._fix_at
+
+    def fresh(self) -> bool:
+        age = self.age_s()
+        return age is not None and age <= self.stale_s
+
+    @property
+    def source(self) -> str:
+        return "vision" if self.fresh() else self.fallback.source
+
+    def pose(self) -> Pose | None:
+        fb = self.fallback.pose()
+        if not self.fresh():
+            return fb
+        with self._lock:
+            x, y, yaw = self._fix
+        return Pose(x, y, fb.z_cm if fb else 0.0,
+                    normalize_yaw(yaw) if yaw is not None else (fb.yaw_deg if fb else 0.0))
+
+    def reset(self, pose: Pose) -> None:
+        self.fallback.reset(pose)
+
+    def update(self, raw: dict[str, Any]) -> None:
+        self.fallback.update(raw)
+
+    def on_move(self, dx_cm: float, dy_cm: float, dz_cm: float) -> None:
+        self.fallback.on_move(dx_cm, dy_cm, dz_cm)
 
 
 class MissionPadProvider(PositionProvider):

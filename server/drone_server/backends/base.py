@@ -13,6 +13,7 @@ from ..models import Telemetry
 
 class DroneBackend(ABC):
     name: str = "?"  # config 메시지의 backend 값
+    vision = None    # VisionProvider (pos_source = "vision"일 때). POST /vision/pose가 여기로 값을 넣는다
 
     @abstractmethod
     async def connect(self) -> None:

@@ -10,6 +10,7 @@ import math
 import time
 
 from ..models import BackendError, Pose, Telemetry
+from ..positioning import PositionProvider, VisionProvider
 from ..settings import Settings
 from .base import DroneBackend
 
@@ -27,6 +28,8 @@ class MockBackend(DroneBackend):
         self.flying = False
         self.connected = False
         self._last_drain = time.monotonic()
+        if self.cfg.pos_source == "vision":
+            self.vision = VisionProvider(_MockPoseProvider(self), settings.vision.stale_s)
 
     # --- 내부 ---
     def _drain(self) -> None:
@@ -66,8 +69,8 @@ class MockBackend(DroneBackend):
         return Telemetry(
             connected=self.connected,
             flying=self.flying,
-            pos=Pose(self.pose.x_cm, self.pose.y_cm, self.pose.z_cm, self.pose.yaw_deg),
-            pos_source="estimate",
+            pos=self.vision.pose() if self.vision else Pose(self.pose.x_cm, self.pose.y_cm, self.pose.z_cm, self.pose.yaw_deg),
+            pos_source=self.vision.source if self.vision else "estimate",
             battery_pct=round(self.battery),
         )
 
@@ -102,3 +105,22 @@ class MockBackend(DroneBackend):
         self._require()
         self.flying = False
         self.pose.z_cm = 0.0  # 모터 정지 → 그대로 추락
+
+
+class _MockPoseProvider(PositionProvider):
+    """mock + vision용 fallback: 가짜 드론의 자체 위치를 그대로 쓰고,
+    vision 값이 오면(reset) 가짜 드론의 위치를 그 값으로 옮긴다 → 다음 이동은 vision 위치에서 시작."""
+
+    def __init__(self, backend: MockBackend):
+        self.b = backend
+
+    @property
+    def source(self) -> str:
+        return "estimate"
+
+    def pose(self) -> Pose | None:
+        p = self.b.pose
+        return Pose(p.x_cm, p.y_cm, p.z_cm, p.yaw_deg)
+
+    def reset(self, pose: Pose) -> None:
+        self.b.pose.x_cm, self.b.pose.y_cm = pose.x_cm, pose.y_cm

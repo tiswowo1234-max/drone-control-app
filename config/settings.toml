@@ -98,12 +98,13 @@ battery_start_pct = 100
 battery_drain_flying_pct_per_min = 6    # 비행 중 배터리 감소
 battery_drain_idle_pct_per_min = 0.5
 time_scale = 1.0                        # 1보다 크면 그만큼 빨리 진행 (테스트용)
+pos_source = "estimate"                 # "estimate" = 가짜 드론 자체 위치 / "vision" = POST /vision/pose 값 (run_server.bat mock --vision 과 같음)
 
 [sim]
 # Unity 시뮬레이터 백엔드 (python run_server.py sim) — UnityProject.exe를 먼저 켠다
 host = "127.0.0.1"
 port = 9911
-pos_source = "estimate"   # "estimate" = 명령 누적 추정(실제 드론과 같은 조건) / "sim_truth" = 시뮬레이터 참값
+pos_source = "estimate"   # "estimate" = 명령 누적 추정(실제 드론과 같은 조건) / "sim_truth" = 시뮬레이터 참값 / "vision" = 카메라 위치 추정 입력
 speed_cm_s = 100          # go 명령 속도 (10~100, 시뮬레이터 cm/s). 시뮬레이터 세계가 커서(지도 1cm ≈ 25 시뮬 cm) 최대로
 segment_cm = 200          # 한 번에 보내는 최대 이동 거리(시뮬레이터 cm, 약 2초). 짧을수록 정지 버튼이 빨리 먹힘 (시뮬레이터는 진행 중 명령을 못 끊음)
 go_axes = "sim"           # 시뮬레이터의 go는 (a=오른쪽, b=전진) — 실제 SDK(x=전진, y=왼쪽)와 다름 [확정: 2026-11-11 실측]
@@ -114,7 +115,7 @@ land_descend_to_cm = 100  # 착륙 전에 시뮬레이터 높이 1 m까지 go로
 
 [real]
 # 실제 RoboMaster TT 백엔드 (python run_server.py real) — PC/라즈베리파이를 TT Wi-Fi에 연결
-pos_source = "estimate"   # "estimate" / "mission_pad" (조원 구현, server/README.md 참고)
+pos_source = "estimate"   # "estimate" / "vision" = 카메라 위치 추정(조원 코드 → POST /vision/pose) / "mission_pad"
 speed_cm_s = 30           # [임시] 실내 3m 공간이라 느리게
 segment_cm = 50
 go_axes = "sdk"
@@ -125,3 +126,10 @@ go_axes = "sdk"
 # x_cm = 20
 # y_cm = 20
 # rot_deg = 0
+
+[vision]
+# 카메라 위치 추정 입력 (조원 코드 → POST http://<서버>:8000/vision/pose, docs/api.md 7장)
+# 켜는 법: 백엔드의 pos_source = "vision" 또는 run_server.bat mock --vision
+stale_s = 1.0           # 마지막 값을 받은 뒤 이 시간(초)이 지나면 명령 누적 추정으로 이어 감 [임시: 조원 송신 빈도 미정]
+min_confidence = 0.0    # confidence가 이보다 낮으면 거부 (LOW_CONFIDENCE) [임시]
+margin_m = 0.1          # 지도(0~2.5 m) 밖 이만큼까지는 받아 줌 (추정 오차 여유) [임시]

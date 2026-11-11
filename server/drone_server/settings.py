@@ -39,6 +39,14 @@ class ServerCfg:
 
 
 @dataclass(frozen=True)
+class VisionCfg:
+    """카메라 위치 추정 입력 (docs/api.md 7장, POST /vision/pose)."""
+    stale_s: float = 1.0          # 마지막 값을 받은 뒤 이 시간이 지나면 명령 누적 추정으로 넘어간다
+    min_confidence: float = 0.0   # 이보다 낮은 confidence는 버린다 (LOW_CONFIDENCE)
+    margin_m: float = 0.1         # 지도 경계 밖 이만큼까지는 받아 준다 (추정 오차 여유)
+
+
+@dataclass(frozen=True)
 class MockCfg:
     speed_cm_s: float = 50.0          # 수평 이동 속도
     vertical_speed_cm_s: float = 40.0  # 이착륙·고도 변경 속도
@@ -47,6 +55,7 @@ class MockCfg:
     battery_drain_flying_pct_per_min: float = 6.0
     battery_drain_idle_pct_per_min: float = 0.5
     time_scale: float = 1.0            # 테스트에서 빠르게 돌릴 때 > 1
+    pos_source: str = "estimate"      # estimate = 가짜 드론 자체 위치 / vision = POST /vision/pose 값
 
 
 @dataclass(frozen=True)
@@ -55,7 +64,7 @@ class TelloCfg:
     speed_cm_s: int = 50          # go_xyz_speed 속도 (10..100)
     segment_cm: float = 50.0      # 한 번에 보내는 최대 이동 거리 (짧을수록 stop이 빨리 먹힘)
     arrive_tol_cm: float = 20.0   # TT go 명령 최소 이동량이 20cm라 그보다 가까우면 도착으로 본다
-    pos_source: str = "estimate"  # sim: estimate | sim_truth / real: estimate | mission_pad
+    pos_source: str = "estimate"  # sim: estimate | sim_truth | vision / real: estimate | mission_pad | vision
     go_axes: str = "sdk"          # sdk: go(x=전진, y=왼쪽) / sim: go(a=오른쪽, b=전진) — 시뮬레이터 차이
     host: str = "127.0.0.1"       # sim 전용
     port: int = 9911              # sim 전용
@@ -135,6 +144,7 @@ class Settings:
     sim: TelloCfg = field(default_factory=TelloCfg)
     real: TelloCfg = field(default_factory=TelloCfg)
     sim_calibration: SimCalibration = field(default_factory=SimCalibration)
+    vision: VisionCfg = field(default_factory=VisionCfg)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -202,6 +212,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         sim=_sub(TelloCfg, raw.get("sim"), sim_defaults),
         real=_sub(TelloCfg, raw.get("real"), real_defaults),
         sim_calibration=_sub(SimCalibration, raw.get("sim_calibration")),
+        vision=_sub(VisionCfg, raw.get("vision")),
         raw=raw,
     )
     validate(s)
@@ -222,6 +233,14 @@ def validate(s: Settings) -> None:
             errs.append(f"[{cfg_name}] go_axes는 'sdk' 또는 'sim'이어야 합니다")
         if not 10 <= c.speed_cm_s <= 100:
             errs.append(f"[{cfg_name}] speed_cm_s는 10~100이어야 합니다")
+    allowed = {"mock": ("estimate", "vision"), "sim": ("estimate", "sim_truth", "vision"),
+               "real": ("estimate", "mission_pad", "vision")}
+    for name, ok in allowed.items():
+        src = getattr(s, name).pos_source
+        if src not in ok:
+            errs.append(f"[{name}] pos_source '{src}'는 {' | '.join(ok)} 중 하나여야 합니다")
+    if s.vision.stale_s <= 0 or s.vision.margin_m < 0:
+        errs.append("[vision] stale_s > 0, margin_m >= 0 이어야 합니다")
     for spec in (s.sim_calibration.map_x_from, s.sim_calibration.map_y_from):
         if spec not in ("+x", "-x", "+z", "-z"):
             errs.append(f"[sim_calibration] 축 설정 '{spec}'이 잘못됐습니다 (+x -x +z -z)")

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import Pose
-from ..positioning import DeadReckoningProvider, MissionPadProvider, PositionProvider
+from ..positioning import DeadReckoningProvider, MissionPadProvider, PositionProvider, VisionProvider
 from ..settings import Settings
 from .tello import TelloBackend
 
@@ -21,6 +21,8 @@ def make_position_provider(settings: Settings) -> PositionProvider:
     src = settings.real.pos_source
     if src == "estimate":
         return dr
+    if src == "vision":
+        return VisionProvider(dr, settings.vision.stale_s)
     if src == "mission_pad":
         pads = {
             int(p["mid"]): {"x_cm": float(p["x_cm"]), "y_cm": float(p["y_cm"]), "rot_deg": float(p.get("rot_deg", 0))}
@@ -29,7 +31,7 @@ def make_position_provider(settings: Settings) -> PositionProvider:
         if not pads:
             raise ValueError("pos_source = mission_pad 인데 settings.toml에 [[mission_pads]]가 없습니다")
         return MissionPadProvider(pads, dr)
-    raise ValueError(f"[real] pos_source는 estimate 또는 mission_pad: {src!r}")
+    raise ValueError(f"[real] pos_source는 estimate | mission_pad | vision: {src!r}")
 
 
 def create_real_backend(settings: Settings) -> TelloBackend:

@@ -5,9 +5,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from . import API_VERSION
 from .backends.base import DroneBackend
@@ -123,8 +125,54 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
     async def health() -> dict:
         """브라우저로 http://<서버IP>:8000/ 을 열어 서버가 살아 있는지 확인하는 용도."""
         st = ctrl.state_message()
+        vision = None
+        if backend.vision is not None:
+            age = backend.vision.age_s()
+            vision = {"enabled": True, "last_age_s": None if age is None else round(age, 2),
+                      "stale_s": settings.vision.stale_s}
         return {"ok": True, "api_version": API_VERSION, "backend": backend.name,
-                "clients": len(hub.clients), "state": st}
+                "clients": len(hub.clients), "vision": vision or {"enabled": False}, "state": st}
+
+    def vision_error(code: str, message: str) -> JSONResponse:
+        return JSONResponse({"ok": False, "error": code, "message": message}, status_code=400)
+
+    @app.post("/vision/pose")
+    async def vision_pose(request: Request):
+        """조원 위치 추정 코드 → 서버 (docs/api.md 7장). 본문 m 단위, 지도 왼쪽 아래 원점."""
+        if backend.vision is None:
+            return vision_error("BAD_REQUEST", "vision 입력이 꺼져 있습니다 (pos_source = \"vision\" 또는 run_server.py --vision)")
+        try:
+            body = await request.json()
+        except ValueError:
+            return vision_error("BAD_REQUEST", "JSON 형식이 아닙니다")
+        if not isinstance(body, dict):
+            return vision_error("BAD_REQUEST", "JSON 객체가 아닙니다")
+
+        def num(key: str, required: bool) -> float | None:
+            v = body.get(key)
+            if v is None:
+                if required:
+                    raise ValueError(f"{key}(숫자)가 필요합니다")
+                return None
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise ValueError(f"{key}는 숫자여야 합니다")
+            return float(v)
+
+        try:
+            x_m, y_m = num("x_m", True), num("y_m", True)
+            yaw, conf, ts = num("yaw_deg", False), num("confidence", False), num("ts", False)
+        except ValueError as e:
+            return vision_error("BAD_REQUEST", str(e))
+        if conf is not None and not 0 <= conf <= 1:
+            return vision_error("BAD_REQUEST", "confidence는 0~1이어야 합니다")
+        m = settings.vision.margin_m
+        w_m, h_m = settings.map_width_cm / 100, settings.map_height_cm / 100
+        if not (-m <= x_m <= w_m + m and -m <= y_m <= h_m + m):
+            return vision_error("OUT_OF_BOUNDS", f"지도({w_m:g}m x {h_m:g}m, 여유 {m:g}m) 밖 좌표입니다")
+        if conf is not None and conf < settings.vision.min_confidence:
+            return vision_error("LOW_CONFIDENCE", f"confidence {conf:g} < {settings.vision.min_confidence:g}")
+        backend.vision.submit(x_m * 100.0, y_m * 100.0, yaw, ts)  # m → cm
+        return {"ok": True}
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

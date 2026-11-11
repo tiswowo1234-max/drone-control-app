@@ -62,7 +62,52 @@ config → 지도 밖 좌표 거부(OUT_OF_BOUNDS) → confirm 없는 비상정�
 
 > 영상(cv2, numpy)이 설치되지 않아도 sim 제어는 된다. 서버가 빈 모듈로 대신한다.
 
-## 3. 테스트
+## 3. 카메라 위치 추정 입력 시험하기 (vision) — 드론 없이
+
+조원의 카메라 위치 추정 코드는 위치를 `POST /vision/pose`로 서버에 보낸다 (docs/api.md 7장).
+조원 코드 대신 `tools/fake_vision.py`가 가짜 위치를 보내서, 앱의 드론 아이콘이 그 위치를 따라가는지 확인할 수 있다.
+
+1. **서버를 vision 모드로 켠다** (PowerShell 창 1):
+   ```
+   cd C:\dev\drone-control-app\server
+   .\run_server.bat mock --vision
+   ```
+   창에 `위치 입력(vision) 켜짐`이 보이면 된다. (이미 다른 서버가 8000번을 쓰고 있으면 그 창에서 Ctrl+C로 먼저 끈다)
+2. **앱을 켜서 서버에 연결**한다 (평소처럼). 드론 아이콘은 정문에 있다.
+3. **가짜 위치를 보낸다** (PowerShell 창 2):
+   ```
+   cd C:\dev\drone-control-app\server
+   .venv\Scripts\python.exe tools\fake_vision.py --pattern circle
+   ```
+   - 창에 `[1] (1.750, 1.250) m → 서버 수신 OK`처럼 줄이 계속 나온다.
+   - **앱에서 드론 아이콘이 지도 가운데에 원을 그리며 움직이면 성공.** 위치 출처(pos_source)는 `vision`.
+4. 창 2에서 `Ctrl+C`로 송신을 멈추면, 1초(`[vision] stale_s`) 뒤 위치 출처가 `estimate`로 바뀌고 아이콘은 마지막 위치에 머문다.
+5. 다른 패턴:
+   | 명령 (창 2) | 확인할 것 |
+   |---|---|
+   | `tools\fake_vision.py` | 정문 (1.532, 0.702)m에 정지 |
+   | `tools\fake_vision.py --pattern waypoints --points "1.5,0.7 0.6,2.0 2.2,0.4"` | 지점들을 차례로 이동 |
+   | `tools\fake_vision.py --pattern circle --noise 0.03` | 아이콘이 조금씩 떨림 (추정 잡음 흉내) |
+   | `tools\fake_vision.py --outside` | `지도 밖 좌표라 거부됨` 출력, 아이콘 그대로 |
+   | `tools\fake_vision.py --confidence 0.3` | settings.toml `[vision] min_confidence`를 0.5로 바꾸면 `신뢰도가 낮아 거부됨` |
+   | `tools\fake_vision.py --hz 1` | 1초에 한 번 (stale_s 1초와 비슷해 estimate/vision이 번갈아 보일 수 있음) |
+6. mock + vision에서 앱으로 출동(goto)하면 가짜 드론은 **마지막 vision 위치에서 출발**해 날아간다. 송신 중이면 아이콘은 vision 값을 따른다.
+
+- vision은 mock·sim·real 모두에서 켤 수 있다: `run_server.bat sim --vision`, 또는 settings.toml의 `[mock]`/`[sim]`/`[real]` `pos_source = "vision"`.
+- 브라우저 `http://127.0.0.1:8000/` 의 `"vision"` 항목에서 마지막 값을 받은 지 몇 초인지(`last_age_s`) 볼 수 있다.
+
+### 조원용: 위치 추정 코드 연동
+- 형식·예제 코드: `tools/fake_vision.py` 맨 위 주석과 `send_pose()` 함수 (표준 라이브러리만 사용, 그대로 복사 가능).
+- 좌표: **m 단위, 지도 왼쪽 아래 (0, 0), x 오른쪽, y 위쪽, 0~2.5 m.** 방향 `yaw_deg`는 지도 위쪽 0°, 시계방향 +.
+- 보내기: `POST http://<서버 IP>:8000/vision/pose`, 본문 `{"x_m": 1.53, "y_m": 0.70, "yaw_deg": 0, "confidence": 0.9, "ts": time.time()}`
+  (`x_m`, `y_m`만 필수). 같은 라즈베리파이에서 돌리면 `http://127.0.0.1:8000`.
+- 응답: `{"ok": true}` 또는 HTTP 400 `{"ok": false, "error": "OUT_OF_BOUNDS" | "LOW_CONFIDENCE" | "BAD_REQUEST", "message": ...}`.
+- 빈도는 자유. 서버는 최신 값만 쓰고, `stale_s`(기본 1초) 동안 값이 없으면 명령 누적 추정으로 이어 간다.
+  → 1초에 2번 이상 보내면 앱에 계속 `vision`으로 표시된다. 더 드물게 보내면 `[vision] stale_s`를 늘린다.
+- `ts`(사진 찍은 시각)를 보내면 순서가 뒤바뀐 오래된 값은 서버가 무시한다.
+- 실제 드론에서 쓰려면 `settings.toml`의 `[real] pos_source = "vision"`. 서버는 구간 이동마다 이 위치를 다시 읽어 목표로 보정한다.
+
+## 4. 테스트
 ```
 cd C:\dev\drone-control-app\server
 .venv\Scripts\python.exe -m pytest -q
@@ -71,7 +116,7 @@ cd C:\dev\drone-control-app\server
 
 ---
 
-## 4. 동작 규칙 (명세에 없는 세부)
+## 5. 동작 규칙 (명세에 없는 세부)
 
 - 연결하면 `config` 1회 → 바로 `state` 1회 → 이후 `[server] state_hz`(5Hz)로 `state`.
 - 앱은 1초마다 `ping`. 비행 중 `link_timeout_s`(3초) 동안 제어 앱의 `ping`/`cmd`가 없으면 자동 착륙 + event `LINK_LOST_LANDING`.
@@ -85,7 +130,7 @@ cd C:\dev\drone-control-app\server
 - 추가 event 코드: `EMERGENCY_STOP`, `LOW_BATTERY`(비행 중 배터리 < min), `DRONE_CONNECTED`, `DRONE_DISCONNECTED`, `CMD_FAILED`, `CONTROLLER_CHANGED`, `BAD_REQUEST`(JSON 오류).
 - 정수인 숫자는 JSON 정수로 보낸다 (`250.0` → `250`).
 
-## 5. 코드 구조
+## 6. 코드 구조
 ```
 server/
   run_server.py / run_server.bat   실행 (인자: mock | sim | real)
@@ -93,8 +138,8 @@ server/
     settings.py      settings.toml 읽기·검증
     safety.py        안전 검사 (경계, 반경, 고도, 금지구역·경로, 배터리)
     controller.py    명령 처리, mode 관리, 감시(ping 끊김·배터리·연결)
-    app.py           FastAPI WebSocket /ws, 상태 push
-    positioning.py   위치 공급자(PositionProvider), 좌표계 변환(DroneFrame/SimFrame)
+    app.py           FastAPI WebSocket /ws, 상태 push, POST /vision/pose
+    positioning.py   위치 공급자(PositionProvider: 누적 추정·시뮬 참값·vision·미션패드), 좌표계 변환
     backends/
       base.py        백엔드 인터페이스
       mock.py        가짜 드론
@@ -102,11 +147,12 @@ server/
       sim.py         Unity 시뮬레이터 (가짜 djitellopy)
       real.py        실제 TT (진짜 djitellopy)
   tools/ws_check.py         앱 없이 확인하는 클라이언트
+  tools/fake_vision.py      가짜 카메라 위치 추정 송신기 (POST /vision/pose)
   tools/sim_calibrate.py    시뮬레이터 좌표 보정값 계산
   tests/
 ```
 
-## 6. 실제 드론(real) 연동 — 조원용
+## 7. 실제 드론(real) 연동 — 조원용
 
 ### 실행
 ```
@@ -152,7 +198,7 @@ class PositionProvider(ABC):
 - 이 폴더를 그대로 복사하고 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt djitellopy`.
 - `run_server.bat` 대신 `.venv/bin/python run_server.py real`. Windows 전용 코드는 없다.
 
-## 7. 시뮬레이터 좌표 보정 (`[sim_calibration]`)
+## 8. 시뮬레이터 좌표 보정 (`[sim_calibration]`)
 - 시뮬레이터 장면의 건물 이름에 OSM ID가 들어 있어, 건물 75개를 OSM과 맞춰 정확히 구했다 (잔차 약 0.2m, 시뮬레이터 기준).
 - 결과(2.5m×2.5m 확정 지도): 시뮬레이터 = 실제의 약 1/10, **동서 거울 반전**(+x = 서쪽), 회전 거의 0°(0.03°), 지도 1cm = 시뮬레이터 0.285m.
 - 시뮬레이터 빌드가 바뀌면 `tools/sim_calibrate.py`를 다시 실행해 값을 갱신한다 (실행법은 파일 맨 위 주석).
