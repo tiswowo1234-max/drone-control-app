@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from drone_server.app import create_app  # noqa: E402
 from drone_server.backends import create_backend  # noqa: E402
-from drone_server.serve import install_log_filters, make_server  # noqa: E402
+from drone_server.serve import install_log_filters, make_server, run_until_stopped  # noqa: E402
 from drone_server.settings import DEFAULT_SETTINGS_PATH, load_settings, validate  # noqa: E402
 
 
@@ -39,7 +39,7 @@ def local_ips() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description="드론 중계 서버")
     ap.add_argument("backend", nargs="?", choices=["mock", "sim", "real"], help="생략하면 settings.toml 값")
     ap.add_argument("--config", default=str(DEFAULT_SETTINGS_PATH), help="settings.toml 경로")
@@ -74,8 +74,8 @@ def main() -> None:
         print(f" 위치 입력(vision) 켜짐: POST http://<이 PC IP>:{port}/vision/pose  (tools/fake_vision.py로 시험)")
     print(" 끄려면 이 창에서 Ctrl+C")
     print("=" * 60)
-    make_server(app, host, port).run()
+    return run_until_stopped(make_server(app, host, port))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

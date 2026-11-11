@@ -15,7 +15,7 @@ import websockets
 
 from drone_server.app import create_app
 from drone_server.backends.mock import MockBackend
-from drone_server.serve import ConnectionResetNoiseFilter, DroneServer, make_server
+from drone_server.serve import ConnectionResetNoiseFilter, DroneServer, make_server, run_until_stopped
 
 
 def free_port() -> int:
@@ -128,3 +128,44 @@ def test_connection_reset_noise_filtered_only():
     assert f.filter(_record(msg, RuntimeError("boom"))) is True                         # 다른 예외는 그대로
     plain = logging.LogRecord("asyncio", logging.INFO, __file__, 1, "hello", None, None)
     assert f.filter(plain) is True
+
+
+class _FakeServer:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def run(self):
+        if self.exc:
+            raise self.exc
+
+
+def test_ctrl_c_keyboard_interrupt_ends_quietly(capsys):
+    """Python 3.14 asyncio.Runner: CancelledError 처리 중 KeyboardInterrupt를 다시 올린다 → 조용히 0."""
+    try:
+        try:
+            raise asyncio.CancelledError()
+        except asyncio.CancelledError:
+            raise KeyboardInterrupt()
+    except KeyboardInterrupt as ki:
+        exc = ki
+    assert run_until_stopped(_FakeServer(exc)) == 0
+    out = capsys.readouterr()
+    assert out.out.strip() == "서버를 종료했습니다." and "Traceback" not in out.err
+
+
+def test_normal_stop_also_prints_once(capsys):
+    assert run_until_stopped(_FakeServer(None)) == 0
+    assert capsys.readouterr().out.strip() == "서버를 종료했습니다."
+
+
+def test_other_exceptions_still_raise():
+    import pytest
+    with pytest.raises(OSError):
+        run_until_stopped(_FakeServer(OSError("port in use")))
+
+
+def test_run_server_main_returns_exit_code(monkeypatch):
+    import run_server
+    monkeypatch.setattr(run_server, "run_until_stopped", lambda srv: 0)
+    monkeypatch.setattr(sys, "argv", ["run_server.py", "mock", "--port", str(free_port())])
+    assert run_server.main() == 0

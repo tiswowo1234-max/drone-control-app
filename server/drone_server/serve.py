@@ -73,6 +73,21 @@ class DroneServer(uvicorn.Server):
             os._exit(0)
 
 
+def run_until_stopped(server: uvicorn.Server) -> int:
+    """서버를 실행하고, Ctrl+C로 끝나면 한 줄만 출력하고 0을 돌려준다.
+
+    Ctrl+C 후 정상 종료가 끝나면 uvicorn이 잡아 두었던 SIGINT를 다시 일으키고, Python 3.14의
+    asyncio.Runner도 KeyboardInterrupt를 다시 올린다(CancelledError가 딸려 나옴). 정상 종료이므로
+    트레이스백 대신 안내 한 줄만 보인다. 다른 예외는 그대로 위로 올려 보이게 둔다.
+    """
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    print("서버를 종료했습니다.", flush=True)
+    return 0
+
+
 def make_server(app, host: str, port: int, **kw) -> DroneServer:
     config = uvicorn.Config(app, host=host, port=port, log_level=kw.pop("log_level", "warning"),
                             timeout_graceful_shutdown=kw.pop("timeout_graceful_shutdown", GRACEFUL_TIMEOUT_S), **kw)
