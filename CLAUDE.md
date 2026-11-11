@@ -93,7 +93,7 @@
 | 2026-11-11 | (이전 지도) 지도 이미지가 실제 방위에서 약 30° 회전 → 위경도는 네 모서리 쌍선형 보간 (API v0.2). 확정 지도는 약 1° 회전(지도 위쪽 ≈ 북쪽), 축척 지도 1cm = 실제 2.866m |
 | 2026-11-11 | 시뮬레이터 세계 = 실제의 약 1/10, 동서 거울 반전. 지도 1cm ≈ 시뮬레이터 0.247m (고도 80cm ≈ 20m). 시뮬레이터 비행은 느리고(지도 끝→끝 약 1분) stop이 약 2초 늦음. 드론 시작 위치 ≈ 지도 (138, 85)cm |
 | 2026-11-11 | Unity 시뮬레이터 지도는 동서(좌우) 반전 상태 → 조원에게 수정 요청함. 수정본을 받으면 `server/tools/sim_calibrate.py`로 `[sim_calibration]`만 재계산. 사용자는 라즈베리파이⇄시뮬레이터 구간에 관여하지 않음 |
-| 2026-11-11 | GitHub 저장소를 새로 만들어 **공개**로 업로드 완료 (https://github.com/tiswowo1234-max/drone-control-app). 이후 변경은 커밋 후 `git push` |
+| 2026-11-11 | GitHub 저장소를 새로 만들어 **공개**로 업로드 완료 (https://github.com/tiswowo1234-max/drone-control-app). **push 규칙: 사용자가 GitHub 업데이트를 언급할 때마다 메인 세션이 `git push`(일반 push만, 강제 push 금지)** |
 | 2026-11-11 | GitHub 저장소 `tiswowo1234-max/drone-control-app` 공개 준비: 커밋 기록의 작성자 이메일을 GitHub noreply로 변경, 시뮬레이터 폴더를 기록에서 제거(백업 `C:\dev\drone-control-app-backup-before-public.bundle`), README에 OSM(ODbL) 출처 표기. 이후 커밋 이메일 = `355318143+tiswowo1234-max@users.noreply.github.com` |
 | 2026-11-11 | 앱 여러 개 연결 시: 명령권 앱이 끊기면 남은 앱 중 가장 최근 연결 앱이 명령권을 넘겨받음. 모든 앱이 끊기면 자동 착륙 (API v0.6) |
 | 2026-11-11 | 사용자 확인 완료: APK(`C:\dev\경비드론.apk`)를 Galaxy S25에 설치, 같은 네트워크의 PC 서버(mock)에 정상 연결 |
