@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Unity simulator build binaries (received from teammate, not tracked)
+RoboMasterTT-Simulator beta/D3D12/
+RoboMasterTT-Simulator beta/MonoBleedingEdge/
+RoboMasterTT-Simulator beta/UnityProject_Data/
+RoboMasterTT-Simulator beta/UnityProject_BurstDebugInformation_DoNotShip/
+RoboMasterTT-Simulator beta/*.exe
+RoboMasterTT-Simulator beta/*.dll
+
+# Android / IDE / OS
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.vscode/
+Thumbs.db
+desktop.ini
