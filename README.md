@@ -19,7 +19,10 @@
 | `docs/teammate/interface.md` | 연동 설명서 (송수신 형식, 명령별 동작, 서버 실행 방법) |
 | `map/` | 바닥 인쇄 지도 원본 (2.5m × 2.5m, EPS/PDF) |
 | `tools/` | 지도 이미지 변환·위경도 정합 스크립트 |
-| `RoboMasterTT-Simulator beta/` | 시뮬레이터용 Python 드라이버 (팀원 제작) |
+
+
+Unity 시뮬레이터(`RoboMasterTT-Simulator beta/`)는 팀원의 작업물이라 이 저장소에 포함하지 않습니다.
+`sim` 모드로 실행하려면 시뮬레이터 폴더를 프로젝트 루트에 따로 두어야 합니다.
 
 ## 빠른 시작 (드론 없이)
 ```bash
