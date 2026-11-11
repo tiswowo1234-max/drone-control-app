@@ -17,10 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import uvicorn  # noqa: E402
-
 from drone_server.app import create_app  # noqa: E402
 from drone_server.backends import create_backend  # noqa: E402
+from drone_server.serve import install_log_filters, make_server  # noqa: E402
 from drone_server.settings import DEFAULT_SETTINGS_PATH, load_settings, validate  # noqa: E402
 
 
@@ -52,6 +51,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
+    install_log_filters()
     settings = load_settings(args.config)
     kind = args.backend or settings.backend
     if args.vision:
@@ -74,7 +74,7 @@ def main() -> None:
         print(f" 위치 입력(vision) 켜짐: POST http://<이 PC IP>:{port}/vision/pose  (tools/fake_vision.py로 시험)")
     print(" 끄려면 이 창에서 Ctrl+C")
     print("=" * 60)
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    make_server(app, host, port).run()
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ log = logging.getLogger("drone_server.app")
 
 SEND_TIMEOUT_S = 2.0
 RECONNECT_PERIOD_S = 2.0
+SHUTDOWN_STEP_TIMEOUT_S = 1.0
 
 
 def make_config_message(s: Settings, backend_name: str) -> dict:
@@ -111,10 +112,15 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         try:
             yield
         finally:
+            # 종료가 어떤 이유로든 오래 걸리지 않도록 단계마다 시간 제한을 둔다 (Ctrl+C 후 수 초 안에 종료)
             for t in tasks:
                 t.cancel()
-            await ctrl.shutdown()
-            await backend.close()
+            await asyncio.wait(tasks, timeout=SHUTDOWN_STEP_TIMEOUT_S)
+            for step in (ctrl.shutdown, backend.close):
+                try:
+                    await asyncio.wait_for(step(), SHUTDOWN_STEP_TIMEOUT_S)
+                except Exception as e:  # noqa: BLE001 — 시간 초과 포함, 종료는 계속한다
+                    log.warning("shutdown step %s: %r", step.__qualname__, e)
 
     app = FastAPI(title="drone relay server", lifespan=lifespan)
     app.state.controller = ctrl
