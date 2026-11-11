@@ -15,12 +15,13 @@ height_cm = 250
 image = "app/assets/map.png"   # tools/pdf_to_png.py로 생성 (2500x2500px)
 
 [home]
-# 이륙·귀환 지점 [임시]
-x_cm = 20
-y_cm = 20
+# 이륙·귀환 지점 [확정: 2026-11-11, 정문(main_gate, 지도의 빨간 점)]
+# EPS 원 중심 (4341.46, 1989.41) pt → 250 cm / 7086.61 pt 로 환산
+x_cm = 153.2
+y_cm = 70.2
 
 [limits]
-max_radius_cm = 250      # home에서 이 거리보다 먼 목표는 거부 [임시]
+max_radius_cm = 250      # home에서 이 거리보다 먼 목표는 거부 [임시] (정문 기준 가장 먼 지도 모서리 약 236 cm → 지도 전체 포함)
 min_alt_cm = 50          # [임시]
 max_alt_cm = 150         # 시연 공간 천장 높이 확인 후 조정 [임시]
 default_alt_cm = 80      # [임시]
