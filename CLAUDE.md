@@ -69,7 +69,8 @@
 
 ## Claude 세션 실행 환경 주의
 - Claude 세션의 명령은 격리된 공간에서 실행된다. `C:\Users\tiswo\AppData` 등 **프로젝트 밖 사용자 폴더에 쓴 파일은 사용자의 터미널에서 보이지 않는다.**
-- 그래서 사용자도 써야 하는 캐시·도구는 `C:\dev` 아래에 둔다: Flutter `C:\dev\flutter`, Android SDK `C:\dev\android-sdk`, Dart 패키지 `C:\dev\pub-cache`(`PUB_CACHE`, 사용자 환경 변수와 `.claude/settings.json`에 설정).
+- 그래서 사용자도 써야 하는 캐시·도구는 `C:\dev` 아래에 둔다: Flutter `C:\dev\flutter`, Android SDK `C:\dev\android-sdk`(NDK 28.2 포함), Dart 패키지 `C:\dev\pub-cache`(`PUB_CACHE`, 사용자 환경 변수와 `.claude/settings.json`에 설정), Gradle `C:\dev\gradle-home`(`GRADLE_USER_HOME`).
+- APK 빌드(메인 세션): `JAVA_HOME`=JDK17, `PUB_CACHE`, `GRADLE_USER_HOME` 설정 후 `app`에서 `flutter build apk --release`. 결과를 `C:\dev\경비드론.apk`로 복사. 첫 시도에 Gradle이 "Unsupported or unrecognized SSL message"로 실패할 수 있으나 자동 재시도로 성공했다.
 - Python 가상환경은 프로젝트 안(`server\.venv`, `tools\.venv`)에 둔다.
 
 ## 조정 가능한 값
