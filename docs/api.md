@@ -1,4 +1,4 @@
-# 앱 ⇄ 중계 서버 API 명세 (초안 v0.4)
+# 앱 ⇄ 중계 서버 API 명세 (초안 v0.5)
 
 > 상태: **초안**. 조원(라즈베리파이·카메라 위치 추정 담당)과 협의해 수정·통일할 예정이다.
 > 바뀌면 이 문서의 버전과 변경 기록을 먼저 고친 다음 코드를 고친다.
@@ -24,7 +24,7 @@
 ```json
 {
   "type": "config",
-  "api_version": "0.1",
+  "api_version": "0.5",
   "map": { "width_cm": 250, "height_cm": 250 },
   "home": { "x_cm": 153.2, "y_cm": 70.2 },
   "limits": {
@@ -49,6 +49,7 @@
 }
 ```
 - 숫자는 모두 예시이며 서버 설정 파일에서 정한다.
+- `api_version`: 서버가 따르는 이 명세의 버전.
 - `backend`: `mock`(Unity 없는 가짜 드론) · `sim`(시뮬레이터) · `real`(실제 드론). 화면 표시용이다.
 - `geo`: 지도 이미지 **네 모서리**의 위도·경도 (`config/settings.toml`의 `[geo]`).
   - `sw`/`se`/`nw`/`ne`는 **이미지 기준** 왼쪽아래/오른쪽아래/왼쪽위/오른쪽위이며 실제 방위가 아니다.
@@ -100,6 +101,7 @@
 | `CMD_FAILED` | 접수된 명령이 실행 중 실패 |
 | `CONTROLLER_CHANGED` | 명령 권한을 가진 앱이 바뀜 |
 | `ALREADY_LANDED` | 이미 착지 상태라 착륙 명령을 무시 |
+| `BAD_REQUEST` | 앱이 보낸 메시지가 JSON 형식이 아님 |
 
 ## 4. 앱 → 서버
 
@@ -110,7 +112,7 @@
 | cmd | 추가 필드 | 설명 |
 |---|---|---|
 | `takeoff` | — | 이륙 후 `default_alt_cm`에서 호버링 |
-| `goto` | `x_cm`, `y_cm`, (`z_cm` 생략 시 현재 고도) | 목표 지점으로 이동. 착지 상태이면 이륙부터 한다 |
+| `goto` | `x_cm`, `y_cm`, (`z_cm` 생략 시 현재 고도를 `min_alt_cm`~`max_alt_cm`로 맞춘 값) | 목표 지점으로 이동. 착지 상태이면 이륙부터 한다 |
 | `stop` | — | 그 자리에서 호버링 |
 | `land` | — | 그 자리에 착륙 |
 | `return_home` | — | `home`으로 이동한 뒤 착륙 |
@@ -120,7 +122,9 @@
 - `stop`, `land`, `emergency`는 다른 명령이 진행 중이어도 즉시 처리한다.
   (시뮬레이터는 진행 중인 이동 구간을 끊지 못해 `stop`이 약 2초 늦을 수 있다. `emergency`는 즉시.)
 - 이동 중에 새 `goto`가 오면 기존 이동을 취소하고 새 목표로 간다.
-- 이륙 중(`taking_off`)에 `goto`가 오면 `BUSY`로 거부한다.
+- 이륙 중(`taking_off`)에 `goto`나 `return_home`이 오면 `BUSY`로 거부한다.
+- 귀환 중(`returning`)에 새 `goto`가 오면 귀환을 취소하고 새 목표로 간다.
+- 도착 판정: 각 축 오차가 약 20cm 미만이면 도착으로 본다(TT의 최소 이동 거리 제한). 목표에서 최대 약 20cm 벗어나 멈출 수 있다.
 
 ### 4.2 `ping` — 생존 신호 (1초마다)
 ```json
@@ -164,17 +168,21 @@
 | 필드 | 필수 | 설명 |
 |---|---|---|
 | `x_m`, `y_m` | ✅ | 추정 위치 (m) |
-| `yaw_deg` | | 드론 방향. 없으면 서버가 드론 센서 값을 쓴다 |
-| `confidence` | | 0~1 신뢰도. `[vision] min_confidence`보다 낮으면 서버가 버린다 |
-| `ts` | | 사진을 찍은 시각 (유닉스 초). 없으면 서버가 받은 시각 |
-- 응답: 성공 `{"ok": true}` / 실패 `{"ok": false, "error": "OUT_OF_BOUNDS" | "LOW_CONFIDENCE" | "BAD_REQUEST"}` (HTTP 400)
+| `yaw_deg` | | 드론 방향. 앱 화면 표시에만 쓰고, 비행 제어는 드론 자체 yaw 센서를 쓴다. 없으면 센서 값을 표시한다 |
+| `confidence` | | 0~1 신뢰도. `[vision] min_confidence`보다 낮으면 `LOW_CONFIDENCE`로 거부, 0~1 밖이면 `BAD_REQUEST` |
+| `ts` | | 사진을 찍은 시각 (유닉스 초). **순서 확인에만 쓴다**: 이전에 받은 값보다 오래된 `ts`는 버린다(응답은 `{"ok": true}`) |
+- 응답: 성공 `{"ok": true}` / 실패(HTTP 400) `{"ok": false, "error": "OUT_OF_BOUNDS" | "LOW_CONFIDENCE" | "BAD_REQUEST", "message": "한국어 설명"}`
+- 서버가 vision 입력을 켜지 않은 상태(`--vision` 또는 `pos_source = "vision"` 아님)면 `BAD_REQUEST`로 거부한다.
 - 보내는 빈도는 정하지 않는다(미정). 서버는 **가장 최근 값**만 쓴다.
+  - 권장: `stale_s`(기본 1초) 안에 최소 2번, 즉 **1초에 2번 이상** 보내야 앱에 계속 `vision`으로 표시된다. 더 느리면 `stale_s`를 늘린다.
 
 ### 7.3 서버 동작
-- 마지막 값을 받은 지 `[vision] stale_s`초(기본 1.0) 이내면 `state.pos_source = "vision"`, 그 위치를 쓴다.
+- 마지막 값을 **서버가 받은 시각** 기준으로 `[vision] stale_s`초(기본 1.0) 이내면 `state.pos_source = "vision"`, 그 위치를 쓴다.
 - 그보다 오래되면 마지막 추정 위치에서부터 **명령 누적 추정**으로 이어 가고 `pos_source = "estimate"`가 된다.
 - 지도 밖 좌표(여유 `[vision] margin_m` 포함)는 `OUT_OF_BOUNDS`로 거부한다.
+- 상태 확인: 브라우저로 `http://<서버 IP>:8000/`을 열면 `vision.last_age_s`(마지막 값을 받은 뒤 지난 초)가 보인다.
 - 시험용 가짜 송신 스크립트: `server/tools/fake_vision.py` (사용법은 `server/README.md`)
+- 조원용 전체 설명서: `docs/teammate/interface.md`
 
 ## 변경 기록
 | 버전 | 날짜 | 내용 |
@@ -183,3 +191,4 @@
 | 0.2 | 2026-11-11 | `geo`를 네 모서리(sw/se/nw/ne)+`rotation_deg`로 변경, 쌍선형 보간 필수. 지도 x/y가 실제 동/북이 아님을 명시 (지도 30° 회전 발견) |
 | 0.3 | 2026-11-11 | 구현에 맞춰 명시: `backend`에 `mock`, event 코드 목록, 성공 ack 형식, `cmd`도 생존 신호, goto 교체·이륙 중 BUSY, 제어 권한 없는 앱은 BUSY (메시지 형식 변화 없음) |
 | 0.4 | 2026-11-11 | 7장 추가: 카메라 위치 추정 입력 `POST /vision/pose` (m 단위, 지도 왼쪽 아래 원점). `pos_source`에 `vision` 추가 |
+| 0.5 | 2026-11-11 | 구현에 맞춰 명시: 실패 응답 `message`, vision 꺼짐·confidence 범위 → `BAD_REQUEST`, `ts`는 순서 확인용(오래되면 무시), stale 판정은 서버 수신 시각, vision `yaw_deg`는 표시용, 권장 빈도 2Hz 이상, `/` 상태의 `vision.last_age_s`, event `BAD_REQUEST`, 이륙 중 `return_home` BUSY, 귀환 중 goto 교체, `z_cm` 생략 시 고도 클램프, 도착 오차 약 20cm, `api_version` = 명세 버전 |
