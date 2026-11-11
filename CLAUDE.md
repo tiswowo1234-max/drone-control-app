@@ -61,6 +61,7 @@
 | relay-server | `server/`, `config/settings.toml`(`[geo]` 제외) |
 | app-features | `app/lib/`, `app/test/`, `app/pubspec.*` |
 | map-georef | `tools/`(`pdf_to_png.py` 제외), `config/settings.toml`의 `[geo]` |
+| teammate-docs | `docs/teammate/` (조원 공유용 송수신 형식 문서) |
 - 각 세션은 자기 경로만 `git add`로 커밋하고(`git add -A` 금지), 브랜치를 바꾸지 않는다.
 - 명세(`docs/api.md`) 변경은 메인 세션이 한다. 다른 세션은 변경 제안만 보고한다.
 
