@@ -1,13 +1,13 @@
 # 송수신 데이터 형식 — 라즈베리파이 담당 조원용
 
 > 대상: 라즈베리파이 쪽 드론 제어와 카메라 위치 추정을 맡은 조원 (이 앱·서버 코드를 처음 보는 사람)
-> **명세 v0.5 기준 · 작성일 2026-11-11**
+> **명세 v0.6 기준 · 작성일 2026-11-11** (v0.6의 명령권 넘겨받기는 서버 **구현 중**: 3.1, 3.9 참고)
 > 대상: 라즈베리파이 쪽 드론 제어와 카메라 위치 추정을 맡은 조원 (이 앱·서버 코드를 처음 보는 사람)
-> 기준: 앱⇄서버 명세 `docs/api.md` **v0.5**, 서버 코드 `server/drone_server/` (vision 입력 구현 커밋 `79b4f36`)
+> 기준: 앱⇄서버 명세 `docs/api.md` **v0.6**, 서버 코드 `server/drone_server/` (vision 입력 구현 커밋 `79b4f36`)
 > 이 문서는 **연동 형식을 맞추기 위한 공유용**이다. 바꾸고 싶은 점이 있으면 말해 주세요. 정식 명세는 `docs/api.md`가 기준이다.
 
 근거 표기: `controller.py:212`는 `server/drone_server/controller.py`의 212번째 줄이다. (`backends/tello.py`도 `server/drone_server/` 아래)
-서버 코드가 바뀌면 줄 번호가 조금 달라질 수 있다. 아직 풀리지 않은 문제는 6.2 "알려진 한계"에 모아 두었다.
+서버 코드가 바뀌면 줄 번호가 조금 달라질 수 있다. (`app.py` 줄 번호는 커밋 `79b4f36` 기준이며, 이후 서버 커밋으로 약 6줄씩 밀려 있다. 명령권 넘겨받기 구현 커밋이 들어오면 함께 갱신한다.) 아직 풀리지 않은 문제는 6.2 "알려진 한계"에 모아 두었다.
 
 ---
 
@@ -107,7 +107,10 @@ sequenceDiagram
 ```
 - 서버는 검사를 통과하면 **바로 `ack`(ok)를 보내고**, 실제 비행은 그 뒤 백그라운드 작업("미션")으로 실행한다 (`controller.py:147-161`, `controller.py:97-98`). 비행이 끝났는지는 `state.mode`로 본다.
 - 새 명령이 접수되면 진행 중 미션은 취소된다 (`controller.py:88-95`). 미션 실행 중 오류가 나면 `event` `CMD_FAILED`를 보내고 mode를 `hovering`(날고 있으면) 또는 `idle`로 돌린다 (`controller.py:100-110`).
-- 명령은 **마지막에 연결한 앱만** 보낼 수 있다. 다른 앱의 `cmd`는 `BUSY` (`app.py:207-215`).
+- **명령권**: 앱이 여러 개 연결되면 모두 `state`를 받지만, 명령은 **명령권을 가진 앱**(마지막에 연결한 앱)만 보낼 수 있다. 다른 앱의 `cmd`는 `BUSY` (`app.py:207-215`).
+  새 앱이 연결해 명령권이 넘어가면 `event` `CONTROLLER_CHANGED` (`app.py:184-185`).
+- **명령권 넘겨받기 (명세 v0.6, 서버 구현 중)**: 명령권 앱의 연결이 끊기면, 남아 있는 앱 중 **가장 최근에 연결된 앱**이 즉시 명령권을 넘겨받고 `CONTROLLER_CHANGED`를 보낸다. 비행은 계속되며, 이후 생존 신호는 새 명령권 앱의 `ping`으로 판단한다. 남은 앱이 없으면 3.9의 자동 착륙.
+  > 구현 중: 서버 세션이 작업 중이라 아직 코드 근거가 없다. 지금 코드는 끊긴 앱을 목록에서 빼기만 해서(`app.py:192-195`) 명령권은 자연히 남은 최근 앱으로 가지만, 넘겨받을 때 `CONTROLLER_CHANGED`를 보내지 않는다.
 - `cmd`를 받으면 그것도 생존 신호로 친다 (`app.py:216`).
 - 공통 형식 오류: `id`가 없거나 빈 문자열이면 `BAD_REQUEST` (`controller.py:149-150`), 모르는 `cmd`면 `BAD_REQUEST` (`controller.py:152-153`), JSON이 아니면 `event` `BAD_REQUEST` (`app.py:198-205`).
 - `id`는 앱이 정하는 문자열(현재 앱은 `"c-1"`, `"c-2"`, … `app/lib/drone_client.dart:222`).
@@ -279,9 +282,10 @@ emergency     ← 모터 즉시 정지
 ```json
 { "type": "ping", "ts": 1763000000.5 }
 ```
-- 응답은 없다. 제어 권한이 있는 앱의 ping만 생존 신호로 친다 (`app.py:208-211`).
+- 응답은 없다. **명령권을 가진 앱**의 ping(과 cmd)만 생존 신호로 친다 (`app.py:208-211`, `216`).
 - 서버 감시 루프(0.2초마다, `controller.py:259-298`):
-  - 비행 중인데 `link_timeout_s`(**3초**) 동안 ping/cmd가 없으면 → `event` warn `LINK_LOST_LANDING` + 3.6과 같은 착륙 (`controller.py:270-277`)
+  - 비행 중인데 **명령권 앱**에게서 `link_timeout_s`(**3초**) 동안 ping/cmd가 없으면 → `event` warn `LINK_LOST_LANDING` + 3.6과 같은 착륙 (`controller.py:270-277`)
+  - 명령권 앱이 끊겨도 다른 앱이 남아 있으면 명령권이 그 앱으로 넘어가고(3.1), 그 앱의 ping으로 판단한다. **남은 앱이 하나도 없으면** 마지막 생존 신호 뒤 3초가 지나 자동 착륙한다. (명세 v0.6 4.2, 서버 구현 중)
   - 비행 중 배터리 < 20% → `event` warn `LOW_BATTERY` (착지할 때까지 1번만) (`controller.py:279-285`)
   - 드론 연결이 바뀌면 → `DRONE_CONNECTED`(info) / `DRONE_DISCONNECTED`(error) (`controller.py:261-266`)
   - 미션이 없는데 드론이 착지 상태가 되면 mode를 `idle`로 (`controller.py:288-290`)
@@ -308,7 +312,7 @@ emergency     ← 모터 즉시 정지
 ```json
 {
   "type": "config",
-  "api_version": "0.5",
+  "api_version": "0.6",
   "map": { "width_cm": 250, "height_cm": 250 },
   "home": { "x_cm": 153.2, "y_cm": 70.2 },
   "limits": {
@@ -379,12 +383,12 @@ emergency     ← 모터 즉시 정지
 ```
 | code | level | 언제 |
 |---|---|---|
-| `LINK_LOST_LANDING` | warn | 비행 중 앱 ping 3초 끊김 → 자동 착륙 |
+| `LINK_LOST_LANDING` | warn | 비행 중 명령권 앱의 ping 3초 끊김 (남은 앱이 없을 때 포함) → 자동 착륙 |
 | `EMERGENCY_STOP` | warn | 비상정지 실행 |
 | `LOW_BATTERY` | warn | 비행 중 배터리 < 20% |
 | `DRONE_CONNECTED` / `DRONE_DISCONNECTED` | info / error | 드론 연결 변화 |
 | `CMD_FAILED` | error | 접수된 명령이 실행 중 실패 (예: TT가 `go`에 error 응답) |
-| `CONTROLLER_CHANGED` | info | 다른 앱이 새로 연결해 명령 권한이 넘어감 |
+| `CONTROLLER_CHANGED` | info | 다른 앱이 새로 연결해 명령권이 넘어감, 또는 명령권 앱이 끊겨 남은 최근 앱이 넘겨받음(v0.6, 서버 구현 중) |
 | `ALREADY_LANDED` | info | 착지 상태에서 `return_home` |
 | `BAD_REQUEST` | error | 앱이 JSON이 아닌 메시지를 보냄 |
 
