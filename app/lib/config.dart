@@ -45,8 +45,8 @@ class AppConfig {
   static const fallback = AppConfig(
     mapWidthCm: 250,
     mapHeightCm: 250,
-    homeXCm: 20,
-    homeYCm: 20,
+    homeXCm: 153.2,
+    homeYCm: 70.2,
     limits: Limits(
       maxRadiusCm: 250,
       minAltCm: 50,
@@ -56,14 +56,14 @@ class AppConfig {
       linkTimeoutS: 3,
     ),
     geo: GeoBounds(
-      swLat: 36.3638102,
-      swLon: 127.3607256,
-      seLat: 36.3666003,
-      seLon: 127.3667053,
-      nwLat: 36.3672948,
-      nwLon: 127.3582399,
-      neLat: 36.3700849,
-      neLon: 127.3642196,
+      swLat: 36.3639270,
+      swLon: 127.3589258,
+      seLat: 36.3640364,
+      seLon: 127.3669092,
+      nwLat: 36.3703837,
+      nwLon: 127.3587905,
+      neLat: 36.3704931,
+      neLon: 127.3667739,
     ),
     backend: 'unknown',
   );

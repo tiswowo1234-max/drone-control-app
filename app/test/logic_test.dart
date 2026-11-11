@@ -228,7 +228,8 @@ void main() {
       final c = AppConfig.fromJson({'type': 'config', 'geo': null});
       expect(c.geo.seLat, AppConfig.fallback.geo.seLat);
       final p = cmToLatLon(c, const Offset(250, 0));
-      expect(p.lat, closeTo(36.3666003, 1e-9));
+      expect(p.lat, closeTo(36.3640364, 1e-9)); // settings.toml [geo] se
+      expect(p.lon, closeTo(127.3669092, 1e-9));
     });
 
     test('표시 형식', () {
