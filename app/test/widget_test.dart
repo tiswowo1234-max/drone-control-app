@@ -195,8 +195,10 @@ void main() {
           .data!;
       final m = RegExp(r'x ([\d.]+) cm, y ([\d.]+) cm').firstMatch(text)!;
       final x = double.parse(m[1]!), y = double.parse(m[2]!);
-      expect(x, lessThan(125));
-      expect(y, lessThan(90));
+      // 393px 폭 화면 → 1cm = 393/250 px. 끈 거리만큼 정확히 움직여야 한다.
+      const pxPerCm = 393 / 250;
+      expect(x, closeTo(125 - 60 / pxPerCm, 0.5));
+      expect(y, closeTo(90 - 30 / pxPerCm, 0.5));
 
       await tester.tap(find.byKey(const Key('btn-confirm')));
       await tester.pump();

@@ -40,6 +40,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _eventSub?.cancel();
+    _noticeTimer?.cancel();
     super.dispose();
   }
 
@@ -68,15 +69,29 @@ class _MapScreenState extends State<MapScreen> {
               children: [
                 _banner(st),
                 Expanded(
-                  child: MapView(
-                    config: config,
-                    state: st,
-                    droneFresh: _c.online,
-                    marker: _marker,
-                    markerOk: markerIssue == null,
-                    onMarkerMoved: _marker == null
-                        ? null
-                        : (cm) => setState(() => _marker = cm),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: MapView(
+                          config: config,
+                          state: st,
+                          droneFresh: _c.online,
+                          marker: _marker,
+                          markerOk: markerIssue == null,
+                          onMarkerMoved: _marker == null
+                              ? null
+                              : (cm) => setState(() => _marker = cm),
+                        ),
+                      ),
+                      // 알림은 지도 위쪽에 띄운다 (아래쪽 제어 버튼을 가리지 않도록)
+                      if (_notice != null)
+                        Positioned(
+                          left: 8,
+                          right: 8,
+                          top: 8,
+                          child: _noticeBox(_notice!),
+                        ),
+                    ],
                   ),
                 ),
                 _statusPanel(config, st),
@@ -442,14 +457,37 @@ class _MapScreenState extends State<MapScreen> {
     _snack(e.message.isEmpty ? e.code : e.message, color);
   }
 
+  /// 지금 보여 주는 알림 (문장, 색)
+  (String, Color)? _notice;
+  Timer? _noticeTimer;
+
   void _snack(String text, Color color) {
-    final m = ScaffoldMessenger.of(context);
-    m.hideCurrentSnackBar();
-    m.showSnackBar(SnackBar(
-      content: Text(text, style: const TextStyle(fontSize: 16)),
-      backgroundColor: color,
-      duration: const Duration(seconds: 4),
-    ));
+    _noticeTimer?.cancel();
+    setState(() => _notice = (text, color));
+    _noticeTimer = Timer(_noticeDuration, () {
+      if (mounted) setState(() => _notice = null);
+    });
+  }
+
+  static const _noticeDuration = Duration(seconds: 4);
+
+  Widget _noticeBox((String, Color) n) {
+    final (text, color) = n;
+    return Material(
+      key: const Key('notice'),
+      color: color,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => setState(() => _notice = null), // 누르면 닫힘
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Text(text,
+              style: const TextStyle(color: Colors.white, fontSize: 16)),
+        ),
+      ),
+    );
   }
 
   // ---------------------------------------------------------------- 서버 주소

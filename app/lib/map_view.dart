@@ -178,7 +178,8 @@ class _MapViewState extends State<MapView> {
       child: GestureDetector(
         key: const Key('target-marker'),
         behavior: HitTestBehavior.opaque,
-        onPanStart: (d) {
+        // 누른 순간의 위치로 잡은 지점을 기억한다 (드래그로 인정되기까지 움직인 거리도 반영되도록)
+        onPanDown: (d) {
           final local = _toMapLocal(d.globalPosition);
           if (local != null) _grab = coords.cmToPx(widget.marker!) - local;
         },

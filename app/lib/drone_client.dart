@@ -134,13 +134,19 @@ class DroneClient extends ChangeNotifier {
       _lastError = null;
       _sub = link.stream.listen(
         (raw) => _onMessage(gen, raw),
-        onError: (Object e) => _onLost(gen, '$e'),
+        onError: (Object e) {
+          debugPrint('link error: $e');
+          _onLost(gen, '통신 오류로 연결이 끊겼습니다');
+        },
         onDone: () => _onLost(gen, '서버가 연결을 닫았습니다'),
         cancelOnError: true,
       );
       _pingTimer = Timer.periodic(pingInterval, (_) => _tick(gen));
       _setStatus(LinkStatus.online);
-    }, onError: (Object e) => _onLost(gen, '$e'));
+    }, onError: (Object e) {
+      debugPrint('connect failed: $e');
+      _onLost(gen, '접속 실패 — 서버가 켜져 있는지, 주소와 방화벽을 확인하세요');
+    });
   }
 
   void _onMessage(int gen, dynamic raw) {
