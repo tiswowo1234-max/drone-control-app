@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app-web-preview",
+      "runtimeExecutable": "C:\\dev\\drone-control-app\\tools\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", "C:\\dev\\drone-control-app\\app\\build\\web"],
+      "port": 8765
+    }
+  ]
+}

@@ -8,10 +8,11 @@
 
 [map]
 # 바닥에 까는 인쇄 지도의 실제 크기 [임시]
-# 파일명 KAIST_2500mm_Map.pdf 기준 가로 250cm, 세로는 PDF 비율(약 1.39:1)로 계산
+# 파일명 KAIST_2500mm_Map.pdf 기준 가로 250cm, 세로는 지도 영역 비율(1.388:1)로 계산
+# "지도"는 PDF의 흰 여백을 뺀 초록색 영역을 말한다 (tools/pdf_to_png.py가 잘라 냄)
 width_cm = 250
-height_cm = 179
-image = "KAIST_2500mm_Map.pdf"
+height_cm = 180
+image = "app/assets/map.png"   # 원본: KAIST_2500mm_Map.pdf → tools/pdf_to_png.py로 생성
 
 [home]
 # 이륙·귀환 지점 [임시]
