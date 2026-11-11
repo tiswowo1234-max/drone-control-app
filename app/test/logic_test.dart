@@ -130,6 +130,18 @@ void main() {
       expect(e.code, 'LINK_LOST_LANDING');
     });
 
+    test('pos_source 표시 (v0.4 vision 추가)', () {
+      expect(posSourceKo('vision'), '카메라');
+      expect(posSourceKo('estimate'), '추정값');
+      expect(posSourceKo('mission_pad'), '미션패드');
+      expect(posSourceKo('sim_truth'), '시뮬레이터');
+      expect(posSourceKo(null), '-');
+      expect(posSourceMeasured('vision'), isTrue);
+      expect(posSourceMeasured('mission_pad'), isTrue);
+      expect(posSourceMeasured('estimate'), isFalse);
+      expect(posSourceMeasured(null), isFalse);
+    });
+
     test('잘못된 메시지는 무시', () {
       expect(ServerMessage.parse('not json'), isNull);
       expect(ServerMessage.parse('[1,2]'), isNull);

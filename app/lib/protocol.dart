@@ -218,8 +218,14 @@ String posSourceKo(String? s) => switch (s) {
       'estimate' => '추정값',
       'mission_pad' => '미션패드',
       'sim_truth' => '시뮬레이터',
+      'vision' => '카메라',
       null => '-',
       _ => s,
     };
+
+/// 위치를 실제로 측정한 값인지 (카메라·미션패드·시뮬레이터 실제값).
+/// false면 명령을 누적해 계산한 추정값이라 오차가 쌓일 수 있다.
+bool posSourceMeasured(String? s) =>
+    s == 'vision' || s == 'mission_pad' || s == 'sim_truth';
 
 double? _num(Object? v) => v is num ? v.toDouble() : null;

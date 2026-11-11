@@ -200,7 +200,16 @@ class _MapScreenState extends State<MapScreen> {
             : 'x ${pos.xCm.toStringAsFixed(0)}, y ${pos.yCm.toStringAsFixed(0)} cm',
         pos == null ? Colors.red : null
       ),
-      ('위치 출처', posSourceKo(st?.posSource), null),
+      // 측정값(카메라 등)은 초록, 추정값은 주황 → 카메라가 끊겨 추정값으로 바뀌면 바로 보인다
+      (
+        '위치 출처',
+        posSourceKo(st?.posSource),
+        st?.posSource == null
+            ? null
+            : (posSourceMeasured(st!.posSource)
+                ? Colors.green.shade800
+                : Colors.orange.shade900)
+      ),
       ('고도', pos == null ? '-' : '${pos.zCm.toStringAsFixed(0)} cm', null),
       ('배터리', bat == null ? '-' : '${bat.toStringAsFixed(0)}%', batLow ? Colors.red : null),
       ('백엔드', backend, null),

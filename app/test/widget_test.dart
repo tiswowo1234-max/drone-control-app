@@ -59,6 +59,7 @@ Map<String, dynamic> stateMsg({
   String mode = 'hovering',
   Map<String, dynamic>? pos = const {'x_cm': 20, 'y_cm': 20, 'z_cm': 80, 'yaw_deg': 90},
   num? battery = 76,
+  String posSource = 'estimate',
 }) =>
     {
       'type': 'state',
@@ -67,7 +68,7 @@ Map<String, dynamic> stateMsg({
       'flying': mode != 'idle',
       'mode': mode,
       'pos': pos,
-      'pos_source': 'estimate',
+      'pos_source': posSource,
       'target': null,
       'battery_pct': battery,
     };
@@ -168,6 +169,32 @@ void main() {
       expect(find.textContaining('위치 모름', findRichText: true), findsOneWidget);
       expect(find.byKey(const Key('drone-offline-banner')), findsOneWidget);
       expect(find.byTooltip('드론 (90°)'), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('위치 출처: 카메라(초록) ↔ 추정값(주황) 전환이 보인다', (tester) async {
+      await start(tester);
+      Color? colorOf(String text) {
+        for (final r in tester.widgetList<RichText>(find.byType(RichText))) {
+          Color? found;
+          r.text.visitChildren((span) {
+            if (span is TextSpan && span.text == text) found = span.style?.color;
+            return found == null;
+          });
+          if (found != null) return found;
+        }
+        return null;
+      }
+
+      link.push(stateMsg(posSource: 'vision'));
+      await tester.pump();
+      expect(colorOf('카메라'), Colors.green.shade800);
+      expect(colorOf('추정값'), isNull);
+
+      link.push(stateMsg(posSource: 'estimate')); // 카메라 끊김 → 서버가 추정값으로 전환
+      await tester.pump();
+      expect(colorOf('추정값'), Colors.orange.shade900);
+      expect(colorOf('카메라'), isNull);
       await finish(tester);
     });
 
