@@ -38,7 +38,9 @@
 - **미정:** 좌표 반환 빈도(1초에 몇 번), 반환 형식(방향·신뢰도·시각 포함 여부), 조원 코드→서버 전달 방법,
   사진을 찍는 카메라(TT 전방 카메라/`downvision` 하방 카메라/별도 카메라), 미션패드 병행 여부.
 - 서버 쪽 준비 상태: 위치 공급자(`server/drone_server/positioning.py`의 `PositionProvider`)를 갈아 끼우는 구조는 있음.
-  카메라용 공급자(`pos_source = "vision"` 예정)와 전달 통로는 아직 없음. 빈도가 낮으면 사이 구간은 명령 누적 추정으로 채운다.
+  카메라용 공급자(`pos_source = "vision"`)와 입력 통로 `POST /vision/pose`(m 단위) 구현 완료(서버 79b4f36, 명세 v0.5 7장).
+  시험: `server\run_server.bat mock --vision` + `server\tools\fake_vision.py`. 조원용 설명서 `docs/teammate/interface.md`.
+- 알려진 한계(미해결): 실기체(real)는 TT가 스스로 착륙(배터리 부족 등)해도 서버가 모른다(비행 여부를 보낸 명령으로만 판단). TT 상태의 `h`/`tof`로 판정하도록 개선 필요.
 
 ## 안전장치 (필수)
 - 지도 경계 밖·금지 구역 좌표는 앱과 중계 서버 양쪽에서 거부
