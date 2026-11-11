@@ -184,9 +184,9 @@ void main() {
   });
 
   group('위도·경도', () {
-    final config = AppConfig.fromJson(configExample);
+    final config = AppConfig.fromJson(configExample); // v0.1 형식 (sw/ne만)
 
-    test('모서리와 중앙', () {
+    test('v0.1 형식(sw/ne만): 회전 없는 직사각형으로 보간', () {
       final sw = cmToLatLon(config, Offset.zero);
       expect(sw.lat, closeTo(36.3680, 1e-12));
       expect(sw.lon, closeTo(127.3580, 1e-12));
@@ -196,6 +196,39 @@ void main() {
       final mid = cmToLatLon(config, const Offset(125, 90));
       expect(mid.lat, closeTo(36.3710, 1e-12));
       expect(mid.lon, closeTo(127.3630, 1e-12));
+    });
+
+    test('v0.2 네 모서리: 각 모서리와 중앙(네 점 평균)', () {
+      final c = AppConfig.fromJson({
+        'type': 'config',
+        'map': {'width_cm': 250, 'height_cm': 180},
+        'geo': {
+          'sw': {'lat': 36.3638102, 'lon': 127.3607256},
+          'se': {'lat': 36.3666003, 'lon': 127.3667053},
+          'nw': {'lat': 36.3672948, 'lon': 127.3582399},
+          'ne': {'lat': 36.3700849, 'lon': 127.3642196},
+          'rotation_deg': 29.98,
+        },
+      });
+      void at(double x, double y, double lat, double lon) {
+        final p = cmToLatLon(c, Offset(x, y));
+        expect(p.lat, closeTo(lat, 1e-9));
+        expect(p.lon, closeTo(lon, 1e-9));
+      }
+
+      at(0, 0, 36.3638102, 127.3607256); // 왼쪽 아래 = sw
+      at(250, 0, 36.3666003, 127.3667053); // 오른쪽 아래 = se
+      at(0, 180, 36.3672948, 127.3582399); // 왼쪽 위 = nw
+      at(250, 180, 36.3700849, 127.3642196); // 오른쪽 위 = ne
+      at(125, 90, (36.3638102 + 36.3666003 + 36.3672948 + 36.3700849) / 4,
+          (127.3607256 + 127.3667053 + 127.3582399 + 127.3642196) / 4);
+    });
+
+    test('geo가 없거나 null이면 기본값(settings.toml과 같은 네 모서리)', () {
+      final c = AppConfig.fromJson({'type': 'config', 'geo': null});
+      expect(c.geo.seLat, AppConfig.fallback.geo.seLat);
+      final p = cmToLatLon(c, const Offset(250, 0));
+      expect(p.lat, closeTo(36.3666003, 1e-9));
     });
 
     test('표시 형식', () {

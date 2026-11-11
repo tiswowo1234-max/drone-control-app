@@ -45,8 +45,11 @@ Map<String, dynamic> configMsg({double maxRadius = 150}) => {
       },
       'no_fly_zones': [],
       'geo': {
-        'sw': {'lat': 36.3680, 'lon': 127.3580},
-        'ne': {'lat': 36.3740, 'lon': 127.3680},
+        'sw': {'lat': 36.3638102, 'lon': 127.3607256},
+        'se': {'lat': 36.3666003, 'lon': 127.3667053},
+        'nw': {'lat': 36.3672948, 'lon': 127.3582399},
+        'ne': {'lat': 36.3700849, 'lon': 127.3642196},
+        'rotation_deg': 29.98,
       },
       'backend': 'sim',
     };
@@ -182,7 +185,7 @@ void main() {
       await tester.tap(find.byKey(const Key('btn-dispatch')));
       await tester.pump();
       expect(find.text('목표: x 125.0 cm, y 90.0 cm'), findsOneWidget);
-      expect(find.textContaining('위도·경도(참고): 36.37100, 127.36300'), findsOneWidget);
+      expect(find.textContaining('위도·경도(참고): 36.36695, 127.36247'), findsOneWidget);
 
       // 마커를 왼쪽 아래로 끈다
       await tester.drag(find.byKey(const Key('target-marker')), const Offset(-60, 30));

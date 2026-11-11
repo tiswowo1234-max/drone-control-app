@@ -56,10 +56,14 @@ class AppConfig {
       linkTimeoutS: 3,
     ),
     geo: GeoBounds(
-      swLat: 36.3642100,
-      swLon: 127.3589200,
-      neLat: 36.3702100,
-      neLon: 127.3667800,
+      swLat: 36.3638102,
+      swLon: 127.3607256,
+      seLat: 36.3666003,
+      seLon: 127.3667053,
+      nwLat: 36.3672948,
+      nwLon: 127.3582399,
+      neLat: 36.3700849,
+      neLon: 127.3642196,
     ),
     backend: 'unknown',
   );
@@ -72,8 +76,11 @@ class AppConfig {
     final home = _obj(j['home']);
     final lim = _obj(j['limits']);
     final geo = _obj(j['geo']);
+    final hasGeo = geo['sw'] is Map && geo['ne'] is Map;
     final sw = _obj(geo['sw']);
     final ne = _obj(geo['ne']);
+    final swLat = _num(sw['lat']), swLon = _num(sw['lon']);
+    final neLat = _num(ne['lat']), neLon = _num(ne['lon']);
     final fl = f.limits;
     return AppConfig(
       mapWidthCm: _num(map['width_cm']) ?? f.mapWidthCm,
@@ -88,12 +95,23 @@ class AppConfig {
         minBatteryPct: _num(lim['min_battery_pct']) ?? fl.minBatteryPct,
         linkTimeoutS: _num(lim['link_timeout_s']) ?? fl.linkTimeoutS,
       ),
-      geo: GeoBounds(
-        swLat: _num(sw['lat']) ?? f.geo.swLat,
-        swLon: _num(sw['lon']) ?? f.geo.swLon,
-        neLat: _num(ne['lat']) ?? f.geo.neLat,
-        neLon: _num(ne['lon']) ?? f.geo.neLon,
-      ),
+      geo: (hasGeo &&
+              swLat != null &&
+              swLon != null &&
+              neLat != null &&
+              neLon != null)
+          ? GeoBounds(
+              swLat: swLat,
+              swLon: swLon,
+              // se/nw가 없으면(명세 v0.1) 회전 없는 직사각형으로 본다
+              seLat: _num(_obj(geo['se'])['lat']) ?? swLat,
+              seLon: _num(_obj(geo['se'])['lon']) ?? neLon,
+              nwLat: _num(_obj(geo['nw'])['lat']) ?? neLat,
+              nwLon: _num(_obj(geo['nw'])['lon']) ?? swLon,
+              neLat: neLat,
+              neLon: neLon,
+            )
+          : f.geo,
       noFlyZones: [
         for (final z in (j['no_fly_zones'] is List ? j['no_fly_zones'] : []))
           if (z is Map) NoFlyZone.fromJson(z.cast<String, dynamic>()),
@@ -123,19 +141,25 @@ class Limits {
   final double linkTimeoutS;
 }
 
-/// 지도 네 모서리 중 남서(왼쪽 아래)·북동(오른쪽 위)의 위도·경도
+/// 지도 이미지 네 모서리의 위도·경도 (docs/api.md v0.2 `geo`).
+/// sw/se/nw/ne는 **이미지 기준** 왼쪽아래/오른쪽아래/왼쪽위/오른쪽위이며 실제 방위가 아니다
+/// (지도가 약 30° 회전돼 있음).
 class GeoBounds {
   const GeoBounds({
     required this.swLat,
     required this.swLon,
+    required this.seLat,
+    required this.seLon,
+    required this.nwLat,
+    required this.nwLon,
     required this.neLat,
     required this.neLon,
   });
 
-  final double swLat;
-  final double swLon;
-  final double neLat;
-  final double neLon;
+  final double swLat, swLon;
+  final double seLat, seLon;
+  final double nwLat, nwLon;
+  final double neLat, neLon;
 }
 
 /// 비행 금지 구역 (현재 설정에는 없지만 명세에 있으므로 지원)

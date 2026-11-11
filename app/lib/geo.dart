@@ -14,16 +14,19 @@ class LatLon {
       '${lat.toStringAsFixed(digits)}, ${lon.toStringAsFixed(digits)}';
 }
 
-/// 지도 cm 좌표 → 위도·경도.
+/// 지도 cm 좌표 → 위도·경도 (docs/api.md v0.2).
 ///
-/// 지도 왼쪽 아래 = `geo.sw`, 오른쪽 위 = `geo.ne`로 보고 선형 보간한다.
-/// 캠퍼스 정도의 좁은 범위에서는 이 근사로 충분하다 (참고용 표시).
+/// 지도가 회전돼 있으므로 네 모서리 쌍선형 보간을 쓴다.
+/// u = x/가로, v = y/세로일 때
+/// lat = (1-u)(1-v)·sw + u(1-v)·se + (1-u)v·nw + uv·ne  (lon도 같은 식)
 LatLon cmToLatLon(AppConfig config, Offset cm) {
   final g = config.geo;
-  final fx = cm.dx / config.mapWidthCm;
-  final fy = cm.dy / config.mapHeightCm;
+  final u = cm.dx / config.mapWidthCm;
+  final v = cm.dy / config.mapHeightCm;
+  double mix(double sw, double se, double nw, double ne) =>
+      (1 - u) * (1 - v) * sw + u * (1 - v) * se + (1 - u) * v * nw + u * v * ne;
   return LatLon(
-    g.swLat + fy * (g.neLat - g.swLat),
-    g.swLon + fx * (g.neLon - g.swLon),
+    mix(g.swLat, g.seLat, g.nwLat, g.neLat),
+    mix(g.swLon, g.seLon, g.nwLon, g.neLon),
   );
 }

@@ -163,6 +163,7 @@ class _MapScreenState extends State<MapScreen> {
     final backend = switch (config.backend) {
       'sim' => '시뮬레이터',
       'real' => '실제 드론',
+      'mock' => '가짜 드론(mock)',
       _ => '-',
     };
     final serverText = switch (_c.status) {
