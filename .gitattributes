@@ -1,0 +1,4 @@
+# 인쇄용 지도 원본은 줄바꿈 변환 없이 그대로 보관한다
+map/*.eps -text
+*.pdf binary
+*.png binary
