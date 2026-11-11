@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(flutter *)",
+      "PowerShell(dart *)",
+      "PowerShell(C:\\dev\\flutter\\bin\\flutter.bat *)",
+      "PowerShell(C:\\dev\\flutter\\bin\\flutter *)",
+      "PowerShell(git *)",
+      "PowerShell(& \"C:\\Program Files\\Git\\cmd\\git.exe\" *)",
+      "PowerShell(.\\.venv\\Scripts\\python.exe *)",
+      "PowerShell(.venv\\Scripts\\python.exe *)",
+      "PowerShell(C:\\dev\\drone-control-app\\server\\.venv\\Scripts\\python.exe *)",
+      "PowerShell(C:\\dev\\drone-control-app\\tools\\.venv\\Scripts\\python.exe *)",
+      "PowerShell(.\\run_server.bat *)",
+      "PowerShell(C:\\dev\\drone-control-app\\server\\run_server.bat *)",
+      "PowerShell(Stop-Process *)"
+    ]
+  }
+}
