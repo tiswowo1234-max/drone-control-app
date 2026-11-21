@@ -23,14 +23,19 @@ def make_client(settings):
 def test_config_first_then_state(settings):
     with make_client(settings) as client, client.websocket_connect("/ws") as ws:
         cfg = ws.receive_json()
-        assert cfg["type"] == "config" and cfg["api_version"] == "0.6"
+        assert cfg["type"] == "config" and cfg["api_version"] == "0.7"
         assert cfg["map"] == {"width_cm": 250, "height_cm": 250}
         assert cfg["home"] == {"x_cm": 153.2, "y_cm": 70.2}
         assert set(cfg["limits"]) == {"max_radius_cm", "min_alt_cm", "max_alt_cm", "default_alt_cm",
                                       "min_battery_pct", "link_timeout_s"}
         assert cfg["no_fly_zones"] == [] and cfg["backend"] == "mock" and "geo" in cfg
+        assert cfg["vision_modes"] == ["esp32", "tt_down"] and cfg["photo_slots"] == []
+        assert ws.receive_json() == {"type": "incidents", "items": []}  # v0.7: config 바로 다음
         st = recv_until(ws, "state")
-        assert set(st) == {"type", "ts", "connected", "flying", "mode", "pos", "pos_source", "target", "battery_pct"}
+        assert set(st) == {"type", "ts", "connected", "flying", "mode", "pos", "pos_source", "target",
+                           "battery_pct", "vision"}
+        assert st["vision"] == {"mode": "tt_down", "bridge_connected": False, "bridge_mode": None,
+                                "camera_ok": None, "video_live": False}
         assert st["mode"] == "idle" and st["target"] is None
         assert set(st["pos"]) == {"x_cm", "y_cm", "z_cm", "yaw_deg"}
 

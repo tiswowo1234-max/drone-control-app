@@ -1,0 +1,10 @@
+# vision/ 연결 프로그램 + 조원 위치 인식 코드 (Python 3.11 권장, 3.13·3.14에서도 시험함)
+numpy>=1.26,<3
+opencv-python>=4.9,<6      # cv2.aruco(AprilTag), FFmpeg 포함 → TT 영상(UDP H.264)도 이걸로 받는다
+PyYAML>=6,<7               # 조원 localization_app의 camera_config.yaml
+shapely>=2.0,<3            # 조원 sim_camera.py
+pyproj>=3.6,<4             # 조원 geo.py (지도 m ↔ 위도·경도)
+matplotlib>=3.8,<4         # 조원 localization_app 일부 모듈이 import
+requests>=2.31,<3          # 서버로 POST
+websocket-client>=1.7,<2   # 서버 ws /vision/video
+pytest>=8

@@ -17,6 +17,8 @@ class AppConfig {
     this.noFlyZones = const [],
     this.backend = 'unknown',
     this.fromServer = false,
+    this.visionModes = const [],
+    this.photoSlots = const [],
   });
 
   /// 바닥 지도의 실제 가로 길이 (cm)
@@ -38,6 +40,13 @@ class AppConfig {
 
   /// 서버가 보낸 값이면 true, 앱 기본값이면 false
   final bool fromServer;
+
+  /// 앱에서 고를 수 있는 위치 추적 카메라 모드 (docs/api.md v0.7 3.1·11장).
+  /// 예: `["esp32", "tt_down"]`. 비어 있으면(이전 서버) 전환 버튼을 숨긴다.
+  final List<String> visionModes;
+
+  /// 사건 사진 슬롯 S1~S4 (docs/api.md v0.7 3.1·9장)
+  final List<PhotoSlot> photoSlots;
 
   Offset get home => Offset(homeXCm, homeYCm);
 
@@ -118,6 +127,14 @@ class AppConfig {
       ],
       backend: j['backend'] is String ? j['backend'] as String : f.backend,
       fromServer: true,
+      visionModes: [
+        for (final m in (j['vision_modes'] is List ? j['vision_modes'] : []))
+          if (m is String) m,
+      ],
+      photoSlots: [
+        for (final p in (j['photo_slots'] is List ? j['photo_slots'] : []))
+          if (p is Map) PhotoSlot.fromJson(p.cast<String, dynamic>()),
+      ].whereType<PhotoSlot>().toList(),
     );
   }
 }
@@ -177,6 +194,49 @@ class NoFlyZone {
               Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()),
         ],
       );
+}
+
+/// 사건 사진 슬롯 하나 (docs/api.md v0.7 3.1 `photo_slots`)
+class PhotoSlot {
+  const PhotoSlot({
+    required this.slot,
+    required this.name,
+    required this.center,
+    this.corners = const [],
+  });
+
+  /// 슬롯 번호 1~4
+  final int slot;
+
+  /// 사람이 읽는 이름 (예: "S1 교육지원동 (W8)")
+  final String name;
+
+  /// 슬롯 중심 (cm). 누르면 여기에 출동 목표를 놓는다.
+  final Offset center;
+
+  /// 네 모서리 (cm). 지도에 사각형으로 그린다.
+  final List<Offset> corners;
+
+  /// 짧은 표시 이름 (예: "S1")
+  String get label => 'S$slot';
+
+  /// 형식이 잘못되면(번호·중심 없음) null
+  static PhotoSlot? fromJson(Map<String, dynamic> j) {
+    final n = j['slot'];
+    final c = _obj(j['center_cm']);
+    final cx = _num(c['x_cm']), cy = _num(c['y_cm']);
+    if (n is! num || cx == null || cy == null) return null;
+    return PhotoSlot(
+      slot: n.toInt(),
+      name: j['name']?.toString() ?? 'S${n.toInt()}',
+      center: Offset(cx, cy),
+      corners: [
+        for (final p in (j['corners_cm'] is List ? j['corners_cm'] : []))
+          if (p is List && p.length >= 2 && p[0] is num && p[1] is num)
+            Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()),
+      ],
+    );
+  }
 }
 
 Map<String, dynamic> _obj(Object? v) =>

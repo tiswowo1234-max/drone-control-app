@@ -1,4 +1,14 @@
-"""FastAPI WebSocket 서버: ws://0.0.0.0:8000/ws (docs/api.md)."""
+"""FastAPI 서버 (docs/api.md v0.7).
+
+  ws   /ws                 앱 ⇄ 서버 (config, incidents, state, ack, event, incident / cmd, ping)
+  GET  /                   상태 확인 (브라우저)
+  POST /vision/pose        vision/ → 위치 (7장)
+  POST /vision/incident    vision/ → 사건 사진 (9장)
+  ws   /vision/video       vision/ → JPEG 영상, bridge_status / 서버 → vision_mode (8·11장)
+  ws   /ws/video           서버 → 앱 JPEG 영상, video_status (10.2장)
+  GET  /incidents/{id}/photo.jpg   사건 사진 (10.1장)
+  GET  /sim/truth          mock/sim 참값 위치 (12장, 합성 카메라용)
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,12 +19,14 @@ import math
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from . import API_VERSION
 from .backends.base import DroneBackend
 from .controller import Controller, make_ack, make_event
-from .settings import Settings
+from .incidents import IncidentError, IncidentStore
+from .settings import VISION_MODES, Settings
+from .vision_link import VisionLink
 
 log = logging.getLogger("drone_server.app")
 
@@ -41,6 +53,8 @@ def make_config_message(s: Settings, backend_name: str) -> dict:
         "no_fly_zones": [{"name": z.name, "polygon_cm": [list(p) for p in z.polygon_cm]} for z in s.no_fly_zones],
         "geo": s.geo,
         "backend": backend_name,
+        "vision_modes": list(VISION_MODES),
+        "photo_slots": [p.to_json() for p in s.photo_slots],
     }
 
 
@@ -83,8 +97,17 @@ class Hub:
 
 def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
     hub = Hub()
-    ctrl = Controller(settings, backend, emit=hub.broadcast)
+    link = VisionLink(settings, backend, emit=hub.broadcast)
+    ctrl = Controller(settings, backend, emit=hub.broadcast, vision_link=link)
+    incidents = IncidentStore(settings)
     config_msg = make_config_message(settings, backend.name)
+    bg_tasks: set[asyncio.Task] = set()
+
+    def spawn(coro) -> None:
+        """HTTP 응답을 기다리게 하지 않고 뒤에서 앱들에 보낸다."""
+        t = asyncio.create_task(coro)
+        bg_tasks.add(t)
+        t.add_done_callback(bg_tasks.discard)
 
     async def connect_loop() -> None:
         while True:
@@ -113,10 +136,10 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
             yield
         finally:
             # 종료가 어떤 이유로든 오래 걸리지 않도록 단계마다 시간 제한을 둔다 (Ctrl+C 후 수 초 안에 종료)
-            for t in tasks:
+            for t in tasks + list(bg_tasks):
                 t.cancel()
             await asyncio.wait(tasks, timeout=SHUTDOWN_STEP_TIMEOUT_S)
-            for step in (ctrl.shutdown, backend.close):
+            for step in (ctrl.shutdown, link.shutdown, backend.close):
                 try:
                     await asyncio.wait_for(step(), SHUTDOWN_STEP_TIMEOUT_S)
                 except Exception as e:  # noqa: BLE001 — 시간 초과 포함, 종료는 계속한다
@@ -126,6 +149,8 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
     app.state.controller = ctrl
     app.state.hub = hub
     app.state.backend = backend
+    app.state.vision_link = link
+    app.state.incidents = incidents
 
     @app.get("/")
     async def health() -> dict:
@@ -137,7 +162,11 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
             vision = {"enabled": True, "last_age_s": None if age is None else round(age, 2),
                       "stale_s": settings.vision.stale_s}
         return {"ok": True, "api_version": API_VERSION, "backend": backend.name,
-                "clients": len(hub.clients), "vision": vision or {"enabled": False}, "state": st}
+                "clients": len(hub.clients), "vision": vision or {"enabled": False},
+                "vision_link": link.health(),
+                "incidents": {"count": len(incidents), "total": incidents.total,
+                              "duplicates": incidents.duplicates},
+                "state": st}
 
     def vision_error(code: str, message: str) -> JSONResponse:
         return JSONResponse({"ok": False, "error": code, "message": message}, status_code=400)
@@ -167,8 +196,15 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         try:
             x_m, y_m = num("x_m", True), num("y_m", True)
             yaw, conf, ts = num("yaw_deg", False), num("confidence", False), num("ts", False)
+            z_m = num("z_m", False)
         except ValueError as e:
             return vision_error("BAD_REQUEST", str(e))
+        mode = body.get("mode")
+        if mode is not None:
+            if mode not in VISION_MODES:
+                return vision_error("BAD_REQUEST", f"mode는 {' | '.join(VISION_MODES)} 중 하나여야 합니다")
+            if mode != link.mode:
+                return vision_error("WRONG_MODE", f"서버의 위치 추적 모드는 {link.mode}입니다 (보낸 값: {mode})")
         if conf is not None and not 0 <= conf <= 1:
             return vision_error("BAD_REQUEST", "confidence는 0~1이어야 합니다")
         m = settings.vision.margin_m
@@ -177,8 +213,78 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
             return vision_error("OUT_OF_BOUNDS", f"지도({w_m:g}m x {h_m:g}m, 여유 {m:g}m) 밖 좌표입니다")
         if conf is not None and conf < settings.vision.min_confidence:
             return vision_error("LOW_CONFIDENCE", f"confidence {conf:g} < {settings.vision.min_confidence:g}")
-        backend.vision.submit(x_m * 100.0, y_m * 100.0, yaw, ts)  # m → cm
+        backend.vision.submit(x_m * 100.0, y_m * 100.0, yaw, ts,
+                              None if z_m is None else z_m * 100.0)  # m → cm
         return {"ok": True}
+
+    @app.post("/vision/incident")
+    async def vision_incident(request: Request):
+        """vision/ → 사건 사진 보고 (docs/api.md 9장). pos_source와 상관없이 항상 받는다."""
+        try:
+            body = await request.json()
+        except ValueError:
+            return vision_error("BAD_REQUEST", "JSON 형식이 아닙니다")
+        try:
+            inc, duplicate = incidents.add(body)
+        except IncidentError as e:
+            return vision_error(e.code, e.message)
+        if duplicate:
+            return {"ok": True, "id": inc.id, "duplicate": True}
+        log.info("incident %s slot=%s mode=%s method=%s (%d bytes)", inc.id, inc.slot, inc.mode,
+                 inc.data["method"], len(inc.photo))
+        where = inc.data["place"] or (f"슬롯 S{inc.slot}" if inc.slot else "위치 미상")
+
+        async def announce() -> None:
+            await hub.broadcast({"type": "incident", "incident": inc.data})
+            await hub.broadcast(make_event("warn", "INCIDENT_NEW", f"새 사건 사진: {where}"))
+        spawn(announce())
+        return {"ok": True, "id": inc.id}
+
+    cors = {"Access-Control-Allow-Origin": "*"}
+
+    @app.get("/incidents/{inc_id}/photo.jpg")
+    async def incident_photo(inc_id: str):
+        """사건 사진 (docs/api.md 10.1). Flutter web(다른 포트)에서도 읽도록 CORS *."""
+        data = incidents.photo(inc_id)
+        if data is None:
+            return JSONResponse({"ok": False, "error": "NOT_FOUND",
+                                 "message": "없는 사건입니다 (서버를 다시 켰을 수 있습니다)"},
+                                status_code=404, headers=cors)
+        return Response(data, media_type="image/jpeg", headers={**cors, "Cache-Control": "max-age=3600"})
+
+    @app.get("/sim/truth")
+    async def sim_truth():
+        """합성 카메라용 참값 위치 (docs/api.md 12장, mock/sim 전용). 지도 m 단위."""
+        if not backend.has_truth:
+            return vision_error("BAD_REQUEST", f"{backend.name} 백엔드에는 참값 위치가 없습니다 (mock/sim 전용)")
+        p = backend.truth_pose()
+        if p is None:
+            return vision_error("NOT_CONNECTED", "아직 시뮬레이터 위치를 읽지 못했습니다")
+        return {"ok": True, "x_m": round(p.x_cm / 100, 4), "y_m": round(p.y_cm / 100, 4),
+                "z_m": round(p.z_cm / 100, 4), "yaw_deg": round(p.yaw_deg, 2)}
+
+    @app.websocket("/vision/video")
+    async def vision_video(ws: WebSocket) -> None:
+        """vision/ 연결 프로그램 → 영상·상태 (docs/api.md 8장). 하나만 연결."""
+        await ws.accept()
+        try:
+            await link.serve_bridge(ws)
+        except WebSocketDisconnect:
+            pass
+
+    @app.websocket("/ws/video")
+    async def app_video(ws: WebSocket) -> None:
+        """앱 영상 화면 (docs/api.md 10.2). 명령권·생존 신호와 무관."""
+        await ws.accept()
+        log.info("video viewer connected (%d)", link.video.viewers + 1)
+        try:
+            await link.video.serve_viewer(ws)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            log.info("video viewer disconnected (%d)", link.video.viewers)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(ws.close(), 1.0)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:
@@ -186,6 +292,7 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         hub.clients.append(ws)
         log.info("app connected (%d clients)", len(hub.clients))
         await hub.send(ws, config_msg)
+        await hub.send(ws, {"type": "incidents", "items": incidents.items()})
         await hub.send(ws, ctrl.state_message())
         # 새로 연결한 앱이 명령권을 갖는다. 아직 ping을 못 보냈으니 생존 타이머를 새로 시작한다.
         ctrl.note_alive()

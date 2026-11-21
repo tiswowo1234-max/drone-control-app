@@ -24,7 +24,8 @@ y_cm = 70.2
 max_radius_cm = 250      # home에서 이 거리보다 먼 목표는 거부 [임시] (정문 기준 가장 먼 지도 모서리 약 236 cm → 지도 전체 포함)
 min_alt_cm = 50          # [임시]
 max_alt_cm = 150         # 시연 공간 천장 높이 확인 후 조정 [임시]
-default_alt_cm = 80      # [임시]
+default_alt_cm = 80      # [임시] 2026-11-21: 실제 시연 전까지 비행 고도를 이 값으로 고정(카메라 화면 크기 기준). 시연 후 결정
+fixed_alt = true         # [임시] true = goto에 z_cm이 없으면 항상 default_alt_cm으로 비행(현재 고도 유지 대신). 시연 후 결정
 min_battery_pct = 20     # 이 값 미만이면 출동 거부
 link_timeout_s = 3       # 앱 ping이 이 시간 끊기면 자동 착륙
 
@@ -119,6 +120,9 @@ pos_source = "estimate"   # "estimate" / "vision" = 카메라 위치 추정(조�
 speed_cm_s = 30           # [임시] 실내 3m 공간이라 느리게
 segment_cm = 50
 go_axes = "sdk"
+keepalive_s = 5.0         # [확정: 2026-11-21 실물] 비행 중 5초 동안 명령이 없으면 'rc 0 0 0 0'(제자리)을 보냄. TT는 15초 무명령이면 스스로 착륙함
+ground_h_cm = 10.0        # [임시] 비행 중인데 TT 높이(h)가 이 값 이하로 ground_s초 이어지면 '스스로 착륙'으로 보고 앱에 알림
+ground_s = 1.0            # [임시]
 
 # 미션패드 위치 (pos_source = "mission_pad"일 때). 패드 번호(mid)별 지도 좌표와 회전 [임시]
 # [[mission_pads]]
@@ -133,3 +137,94 @@ go_axes = "sdk"
 stale_s = 1.0           # 마지막 값을 받은 뒤 이 시간(초)이 지나면 명령 누적 추정으로 이어 감 [임시: 조원 송신 빈도 미정]
 min_confidence = 0.0    # confidence가 이보다 낮으면 거부 (LOW_CONFIDENCE) [임시]
 margin_m = 0.1          # 지도(0~2.5 m) 밖 이만큼까지는 받아 줌 (추정 오차 여유) [임시]
+
+# ------------------------------------------------------------
+#  2단계 (2026-11-21~): 카메라 → vision/ → 서버 → 앱 (docs/api.md 7~10장)
+#  아래 섹션은 병합 세션이 미리 만들어 둔 것이다. 하위 세션은 값만 읽고, 키를 새로 추가해야 하면
+#  병합 세션에 알린다(같은 파일을 여러 세션이 고치지 않도록).
+# ------------------------------------------------------------
+[video]
+# 실시간 영상 (vision/ → ws /vision/video → 서버 → ws /ws/video → 앱)
+send_fps = 10            # vision/ 연결 프로그램이 서버로 보내는 초당 장수 [임시]
+send_width_px = 320      # 보낼 때 가로 크기(세로는 비율 유지) [임시]
+jpeg_quality = 70        # 보낼 때 JPEG 품질 1~100 [임시]
+max_frame_kb = 300       # 이보다 큰 장은 서버가 버림
+max_fps = 10             # 서버가 앱 하나에 보내는 초당 최대 장수 [임시]
+stale_s = 2.0            # 이 시간 동안 새 장이 없으면 앱에 "영상 끊김" 알림 [임시]
+
+[incident]
+# 사건 사진 보고 (vision/ → POST /vision/incident → 서버 → 앱 incident 메시지, docs/api.md 9장)
+method = "slot"          # "slot" = 슬롯 위에서 멈추면 슬롯 영역을 잘라 보고(기본) / "photo_finder" = 조원 사진 찾기(나중 시험용)
+min_slot_px = 25         # 화면 속 슬롯의 짧은 변이 이 크기(px) 이상일 때만 보고 [임시: 고도 80cm에서 esp32 약 29~30px, tt_down 약 35px — 30은 경계라 25로]
+slot_margin_px = 4       # 슬롯 네 모서리가 화면 가장자리에서 이만큼 안쪽에 있어야 함 [임시]
+still_s = 1.0            # 이 시간 동안 [임시]
+still_cm = 5             # 드론 이동이 이 거리 이하일 때(호버링) 보고 [임시]
+crop_width_px = 480      # 잘라낸 사진을 이 폭으로 펴서 보냄(작게 찍혀도 앱에서 보기 쉽게 확대) [임시]
+report_cooldown_s = 30   # vision/: 같은 슬롯을 다시 보고하기까지 기다리는 시간 [임시]
+same_place_m = 0.15      # 슬롯이 없을 때(사진 찾기 방식) 이 거리 안의 사진은 같은 사진으로 봄 [임시]
+dedup_s = 30             # 서버: 같은 슬롯/장소가 이 시간 안에 다시 오면 중복으로 무시 [임시]
+keep = 20                # 서버가 기억하는 최근 사건 수 (메모리에만, 재시작하면 사라짐)
+max_photo_kb = 500       # 사진 한 장 최대 크기
+detect = false           # AI(LLM) 판별 사용 여부. 현재 끔 (2026-11-21 결정). 켜려면 API 키·비용 문제를 먼저 정한다
+
+[bridge]
+# vision/ 연결 프로그램 설정 (docs/api.md 8·11·12장)
+server_url = "http://127.0.0.1:8000"   # 중계 서버 주소 (같은 노트북이면 127.0.0.1)
+default_mode = "tt_down"               # 서버를 켰을 때의 위치 추적 모드: "esp32" / "tt_down". 앱에서 바꿀 수 있다 (동시 사용 안 함) [임시]
+pose_send_hz = 5                       # 서버로 위치를 보내는 최대 횟수(초당). [vision] stale_s 안에 2번 이상이 되도록 [임시]
+synthetic_camera = "auto"              # "auto" = mock/sim 서버면 합성 카메라(12장), real이면 실제 카메라 / "on" / "off"
+
+# esp32 모드: XIAO ESP32 카메라(컬러) → 조원 localization_app (건물·도로 색 정합 + AprilTag 융합)
+esp32_camera_url = ""                  # 예: "http://192.168.0.50:81/stream" (공식 CameraWebServer 예제는 :81) [임시: 실행 때 --esp32-url로도 지정]
+esp32_localization = "fusion"          # "map" / "apriltag" / "fusion"
+esp32_hfov_deg = 68.0                  # [임시: 조원 코드 기본값] XIAO 카메라 시야각. 보정하면 그 값으로
+# esp32 색·조명 보정 [임시: 조원 실물 XIAO + 지도 표본 시험값(2026-11-20 README). 2.5m 실제 인쇄 지도에서 다시 확인]
+# 카메라가 읽은 건물색의 Hue가 조금 틀어져 있어, Hue를 보정한 뒤 비슷한 색을 15단위로 묶어 비교한다
+esp32_hue_shift = 3                    # 관측 Hue에 더하는 값 (OpenCV 0~179)
+esp32_hue_band_width = 15              # 비슷한 색을 이 폭으로 묶음 (0 = 묶지 않음)
+esp32_hue_tolerance = 7                # 조원 기본값
+esp32_saturation_tolerance = 78        # 조원 기본 55 → XIAO 시험값 78
+esp32_value_tolerance = 95             # 조원 기본값
+esp32_illumination = "combined"        # 조명 보정: "none" / "clahe" / "constancy" / "field" / "combined" (조원 실물 시험 기본 combined)
+esp32_shadow_aware = true              # 그림자 픽셀의 정합 가중치를 줄임 (조원 실물 시험 기본 켬)
+esp32_width_px = 320                   # 조원 실측 기준 XIAO 스트림 크기 [임시]
+esp32_height_px = 240
+
+# tt_down 모드: TT 내장 하단 카메라(흑백 320x240) → 조원 incident_detection (AprilTag 위치)
+tt_video_url = "udp://0.0.0.0:11111"   # TT 영상(H.264)이 노트북에 들어오는 주소. 영상 켜기(streamon, downvision 1)는 서버가 한다
+tt_width_px = 320
+tt_height_px = 240
+tt_mount_yaw_deg = -90.0               # [확정: 2026-11-21 사용자 실물 확인] 드론 앞쪽 = 카메라 화면 위쪽 + 이 값(도, 시계 +).
+                                       # 앞쪽을 가리키는 화살표가 화면에서 반시계 90° 돌아(왼쪽을 향해) 보였음 → -90
+esp32_mount_yaw_deg = 0.0              # [임시] XIAO를 화면 위쪽 = 드론 앞쪽으로 달면 0. 달고 나서 화살표로 확인
+video_forward_up = true                # 앱 영상을 드론 앞쪽이 위로 오게 돌려서 보냄(위치 계산 화면은 그대로)
+tt_crop_top_left = true                # [확정: 사용자 확인 코드] TT 화면은 320x240보다 크게 디코딩되고 실제 영상은 왼쪽 위 320x240뿐(나머지 잡음) → 그 부분만 잘라 씀
+tt_hfov_deg = 60.0                     # [임시: 모름] 카메라 보정(calibrate_camera.py) 전까지 쓰는 시야각 추정값
+tt_camera_file = ""                    # 카메라 보정 결과 JSON 경로 (비어 있으면 tt_hfov_deg로 추정)
+photo_search_period_s = 0.2            # 슬롯 촬영 판단·사진 찾기 주기 (조원 코드 기본값)
+
+# 사건 사진 슬롯 S1~S4 [확정: 조원 data/maps/slots.json(2026-11-20)을 cm로 환산. 150x100mm, 큰 건물 위]
+# 앱이 지도에 표시하고 누르면 출동 목표가 된다. corners_cm 순서는 조원 파일과 같다
+[[photo_slots]]
+slot = 1
+name = "S1 교육지원동 (W8)"
+center_cm = [30.9, 228.6]
+corners_cm = [[21.9, 228.8], [34.5, 236.9], [39.9, 228.5], [27.3, 220.4]]
+
+[[photo_slots]]
+slot = 2
+name = "S2 학술문화관 (E9)"
+center_cm = [112.2, 220.7]
+corners_cm = [[112.4, 229.8], [120.4, 217.1], [112.0, 211.7], [103.9, 224.4]]
+
+[[photo_slots]]
+slot = 3
+name = "S3 홍&박 KI빌딩 (E4)"
+center_cm = [157.4, 154.3]
+corners_cm = [[148.4, 154.5], [161.0, 162.5], [166.4, 154.1], [153.7, 146.0]]
+
+[[photo_slots]]
+slot = 4
+name = "S4"
+center_cm = [46.8, 89.1]
+corners_cm = [[47.0, 98.1], [55.0, 85.4], [46.5, 80.1], [38.5, 92.8]]

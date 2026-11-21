@@ -102,6 +102,37 @@ class DroneClient extends ChangeNotifier {
   final _events = StreamController<DroneEvent>.broadcast();
   Stream<DroneEvent> get events => _events.stream;
 
+  /// 최근 사건 (최신이 앞, docs/api.md 3.5·3.6). 연결이 끊겨도 남겨 둔다.
+  List<Incident> _incidents = const [];
+  List<Incident> get incidents => _incidents;
+
+  /// 앱에서 쓰는 사건 목록 최대 길이
+  static const maxIncidents = 100;
+
+  /// "확인함"으로 표시한 사건의 [Incident.key] (앱 안에서만 기억, 서버에 보내지 않음)
+  final _acked = <String>{};
+
+  bool isAcked(Incident i) => _acked.contains(i.key);
+
+  /// 확인하지 않은 사건 수 (배지 표시용)
+  int get unackedCount => _incidents.where((i) => !isAcked(i)).length;
+
+  void setAcked(Incident i, bool acked) {
+    final changed = acked ? _acked.add(i.key) : _acked.remove(i.key);
+    if (changed) notifyListeners();
+  }
+
+  void ackAll() {
+    final before = _acked.length;
+    _acked.addAll(_incidents.map((i) => i.key));
+    if (_acked.length != before) notifyListeners();
+  }
+
+  /// 새로 들어온 사건 (`incident` 메시지). 화면이 구독해 눈에 띄는 알림을 띄운다.
+  /// 연결 직후의 `incidents` 목록은 여기로 보내지 않는다 (배지로만 표시).
+  final _newIncidents = StreamController<Incident>.broadcast();
+  Stream<Incident> get newIncidents => _newIncidents.stream;
+
   ServerLink? _link;
   StreamSubscription<dynamic>? _sub;
   Timer? _pingTimer;
@@ -164,8 +195,19 @@ class DroneClient extends ChangeNotifier {
             ?.complete(CmdResult(ack.ok, error: ack.error, message: ack.message));
         return; // 화면 갱신 불필요
       case EventMsg(:final event):
-        _events.add(event);
+        // INCIDENT_NEW는 함께 오는 `incident` 메시지로 알리므로 따로 띄우지 않는다 (명세 3.4)
+        if (event.code != 'INCIDENT_NEW') _events.add(event);
         return;
+      case IncidentMsg(:final incident):
+        final isNew = !_incidents.any((i) => i.key == incident.key);
+        _incidents = [
+          incident,
+          ..._incidents.where((i) => i.key != incident.key),
+        ].take(maxIncidents).toList();
+        if (isNew) _newIncidents.add(incident);
+      case IncidentsMsg(:final items):
+        // 서버가 기억하는 목록이 기준. 서버를 다시 켜 목록이 비면 앱 목록도 비운다.
+        _incidents = items.take(maxIncidents).toList();
       case null:
         return;
     }
@@ -233,9 +275,15 @@ class DroneClient extends ChangeNotifier {
 
   Future<CmdResult> goto(double xCm, double yCm) =>
       sendCommand('goto', {'x_cm': xCm, 'y_cm': yCm});
+  /// 이륙만 한다 (docs/api.md 4.1 `takeoff`): 그 자리에서 떠올라 `default_alt_cm`에서 호버링.
+  Future<CmdResult> takeoff() => sendCommand('takeoff');
   Future<CmdResult> stop() => sendCommand('stop');
   Future<CmdResult> land() => sendCommand('land');
   Future<CmdResult> returnHome() => sendCommand('return_home');
+
+  /// 위치 추적 카메라 전환 (docs/api.md 4.1·11장). `esp32` / `tt_down`.
+  Future<CmdResult> setVisionMode(String mode) =>
+      sendCommand('set_vision_mode', {'mode': mode});
 
   /// 모터 즉시 정지(추락). 화면에서 확인 대화상자를 거친 뒤에만 부른다.
   Future<CmdResult> emergency() => sendCommand('emergency', {'confirm': true});
@@ -252,6 +300,7 @@ class DroneClient extends ChangeNotifier {
     _generation++;
     _teardown();
     _events.close();
+    _newIncidents.close();
     super.dispose();
   }
 }

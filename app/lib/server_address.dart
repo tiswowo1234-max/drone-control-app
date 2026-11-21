@@ -41,4 +41,18 @@ class ServerAddress {
         )
         .toString();
   }
+
+  /// 명령 통로 주소(`ws://host:8000/ws`)와 같은 서버의 HTTP 주소에 [path]를 붙인다.
+  /// 사건 사진(docs/api.md 10.1)에 쓴다. `ws`→`http`, `wss`→`https`.
+  ///
+  /// - `ws://192.168.0.10:8000/ws` + `/incidents/inc-3/photo.jpg`
+  ///   → `http://192.168.0.10:8000/incidents/inc-3/photo.jpg`
+  static Uri httpUrl(Uri wsUri, String path) => wsUri.replace(
+        scheme: wsUri.scheme == 'wss' ? 'https' : 'http',
+        path: path.startsWith('/') ? path : '/$path',
+        query: null,
+      );
+
+  /// 같은 서버의 실시간 영상 통로 (docs/api.md 10.2): `ws://host:8000/ws/video`
+  static Uri videoUrl(Uri wsUri) => wsUri.replace(path: '/ws/video');
 }

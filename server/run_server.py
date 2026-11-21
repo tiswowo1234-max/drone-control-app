@@ -39,6 +39,32 @@ def local_ips() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+LOG_DIR = Path(__file__).resolve().parent / "logs"
+
+
+def add_log_file(kind: str) -> Path | None:
+    """화면에 나오는 로그를 server/logs/server-날짜.log에도 남긴다 (실물 시험 뒤 원인 분석용).
+
+    하루에 파일 하나, 실행할 때마다 이어 쓴다. 실행 시작마다 구분선을 넣는다. 파일을 못 만들어도 서버는 계속 돈다.
+    """
+    import datetime as dt
+    import os
+    if "PYTEST_CURRENT_TEST" in os.environ:  # 자동 테스트가 서버를 켤 때는 실제 로그를 어지럽히지 않는다
+        return None
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        path = LOG_DIR / f"server-{dt.date.today():%Y%m%d}.log"
+        h = logging.FileHandler(path, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
+                                         datefmt="%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(h)
+        logging.getLogger().info("===== 서버 시작 (backend=%s, 인자=%s) =====", kind, " ".join(sys.argv[1:]))
+        return path
+    except OSError as e:
+        logging.getLogger().warning("로그 파일을 만들지 못했습니다: %s", e)
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="드론 중계 서버")
     ap.add_argument("backend", nargs="?", choices=["mock", "sim", "real"], help="생략하면 settings.toml 값")
@@ -51,6 +77,7 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
+    log_path = add_log_file(args.backend or "default")
     install_log_filters()
     settings = load_settings(args.config)
     kind = args.backend or settings.backend
@@ -70,8 +97,12 @@ def main() -> int:
     for ip in local_ips() or ["<이 PC의 IP>"]:
         print(f"   ws://{ip}:{port}/ws")
     print(f" 확인용(브라우저): http://127.0.0.1:{port}/")
+    if log_path:
+        print(f" 로그 파일: {log_path}")
     if getattr(settings, kind).pos_source == "vision":
         print(f" 위치 입력(vision) 켜짐: POST http://<이 PC IP>:{port}/vision/pose  (tools/fake_vision.py로 시험)")
+    print(f" 위치 추적 카메라 모드(처음): {settings.bridge.default_mode}  (앱에서 esp32 / tt_down 전환)")
+    print(f" vision/ 연결 프로그램: ws://<이 PC IP>:{port}/vision/video, POST /vision/incident")
     print(" 끄려면 이 창에서 Ctrl+C")
     print("=" * 60)
     return run_until_stopped(make_server(app, host, port))

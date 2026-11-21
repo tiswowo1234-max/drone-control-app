@@ -1,0 +1,357 @@
+{
+ "slot_size_m": [
+  0.15,
+  0.1
+ ],
+ "frame_mm": 4.0,
+ "bottom_bar_mm": 12.0,
+ "white_margin_mm": 4.0,
+ "map_frame": "meters on the printed map; origin at its lower-left corner; +x east (right), +y north (up); z = 0 on the map surface",
+ "note": "corners are TL, TR, BR, BL with the top facing `up_xy`. Each example photo is printed as large as fits (picture, black frame that is bottom_bar_mm thick under the picture, white margin), and the whole piece is centered in the slot, its top toward `up_xy`; the bar shifts the picture up a little. example_frame_corners_xy_m is the black frame's outer edge, the outline the camera finds; example_picture_corners_xy_m is what the LLM gets.",
+ "slots": [
+  {
+   "slot": 1,
+   "center_xy_m": [
+    0.308742,
+    2.286396
+   ],
+   "up_xy": [
+    -0.539546,
+    0.841956
+   ],
+   "corners_xy_m": [
+    [
+     0.218618,
+     2.288027
+    ],
+    [
+     0.344911,
+     2.368959
+    ],
+    [
+     0.398866,
+     2.284764
+    ],
+    [
+     0.272573,
+     2.203832
+    ]
+   ],
+   "building_index": 13,
+   "building_name": "교육지원동 (W8)",
+   "example_photo": "photos/photo_unlabeled/3.png",
+   "example_piece_corners_xy_m": [
+    [
+     0.2318,
+     2.296475
+    ],
+    [
+     0.331729,
+     2.360512
+    ],
+    [
+     0.385684,
+     2.276316
+    ],
+    [
+     0.285755,
+     2.212279
+    ]
+   ],
+   "example_frame_corners_xy_m": [
+    [
+     0.237326,
+     2.295265
+    ],
+    [
+     0.330519,
+     2.354986
+    ],
+    [
+     0.380158,
+     2.277526
+    ],
+    [
+     0.286965,
+     2.217805
+    ]
+   ],
+   "example_picture_corners_xy_m": [
+    [
+     0.242852,
+     2.294056
+    ],
+    [
+     0.32931,
+     2.34946
+    ],
+    [
+     0.370315,
+     2.285471
+    ],
+    [
+     0.283858,
+     2.230067
+    ]
+   ]
+  },
+  {
+   "slot": 2,
+   "center_xy_m": [
+    1.121821,
+    2.207434
+   ],
+   "up_xy": [
+    0.842955,
+    0.537984
+   ],
+   "corners_xy_m": [
+    [
+     1.12362,
+     2.297555
+    ],
+    [
+     1.204318,
+     2.171112
+    ],
+    [
+     1.120022,
+     2.117313
+    ],
+    [
+     1.039325,
+     2.243757
+    ]
+   ],
+   "building_index": 34,
+   "building_name": "학술문화관 (E9)",
+   "example_photo": "photos/photo_unlabeled/12.png",
+   "example_piece_corners_xy_m": [
+    [
+     1.122416,
+     2.296786
+    ],
+    [
+     1.203114,
+     2.170343
+    ],
+    [
+     1.121226,
+     2.118082
+    ],
+    [
+     1.040529,
+     2.244525
+    ]
+   ],
+   "example_frame_corners_xy_m": [
+    [
+     1.121196,
+     2.291263
+    ],
+    [
+     1.19759,
+     2.171563
+    ],
+    [
+     1.122446,
+     2.123606
+    ],
+    [
+     1.046053,
+     2.243305
+    ]
+   ],
+   "example_picture_corners_xy_m": [
+    [
+     1.119976,
+     2.285739
+    ],
+    [
+     1.192066,
+     2.172783
+    ],
+    [
+     1.13041,
+     2.133433
+    ],
+    [
+     1.05832,
+     2.246389
+    ]
+   ]
+  },
+  {
+   "slot": 3,
+   "center_xy_m": [
+    1.57362,
+    1.542755
+   ],
+   "up_xy": [
+    -0.535678,
+    0.844422
+   ],
+   "corners_xy_m": [
+    [
+     1.483505,
+     1.5448
+    ],
+    [
+     1.610168,
+     1.625152
+    ],
+    [
+     1.663736,
+     1.540709
+    ],
+    [
+     1.537072,
+     1.460358
+    ]
+   ],
+   "building_index": 33,
+   "building_name": "홍&박 KI빌딩 (E4)",
+   "example_photo": "photos/photo_unlabeled/4.png",
+   "example_piece_corners_xy_m": [
+    [
+     1.48427,
+     1.543594
+    ],
+    [
+     1.610933,
+     1.623945
+    ],
+    [
+     1.662971,
+     1.541916
+    ],
+    [
+     1.536307,
+     1.461564
+    ]
+   ],
+   "example_frame_corners_xy_m": [
+    [
+     1.48979,
+     1.542359
+    ],
+    [
+     1.609698,
+     1.618425
+    ],
+    [
+     1.65745,
+     1.543151
+    ],
+    [
+     1.537542,
+     1.467084
+    ]
+   ],
+   "example_picture_corners_xy_m": [
+    [
+     1.495311,
+     1.541124
+    ],
+    [
+     1.608463,
+     1.612904
+    ],
+    [
+     1.647644,
+     1.551141
+    ],
+    [
+     1.534492,
+     1.47936
+    ]
+   ]
+  },
+  {
+   "slot": 4,
+   "center_xy_m": [
+    0.467507,
+    0.89108
+   ],
+   "up_xy": [
+    0.849162,
+    0.528132
+   ],
+   "corners_xy_m": [
+    [
+     0.470355,
+     0.981174
+    ],
+    [
+     0.549575,
+     0.8538
+    ],
+    [
+     0.464659,
+     0.800986
+    ],
+    [
+     0.385439,
+     0.928361
+    ]
+   ],
+   "building_index": 35,
+   "building_name": "",
+   "example_photo": "photos/photo_unlabeled/9.png",
+   "example_piece_corners_xy_m": [
+    [
+     0.475991,
+     0.972112
+    ],
+    [
+     0.543938,
+     0.862862
+    ],
+    [
+     0.459022,
+     0.810049
+    ],
+    [
+     0.391075,
+     0.919298
+    ]
+   ],
+   "example_frame_corners_xy_m": [
+    [
+     0.474707,
+     0.966602
+    ],
+    [
+     0.538429,
+     0.864146
+    ],
+    [
+     0.460306,
+     0.815558
+    ],
+    [
+     0.396584,
+     0.918014
+    ]
+   ],
+   "example_picture_corners_xy_m": [
+    [
+     0.473423,
+     0.961093
+    ],
+    [
+     0.53292,
+     0.86543
+    ],
+    [
+     0.468384,
+     0.825292
+    ],
+    [
+     0.408887,
+     0.920955
+    ]
+   ]
+  }
+ ]
+}

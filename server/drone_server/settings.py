@@ -14,6 +14,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SETTINGS_PATH = REPO_ROOT / "config" / "settings.toml"
 
+# 위치 추적 카메라 모드 (docs/api.md 11장): esp32 = XIAO ESP32 컬러, tt_down = TT 하단 카메라(흑백 320x240)
+VISION_MODES = ("esp32", "tt_down")
+INCIDENT_METHODS = ("slot", "photo_finder")
+
 
 @dataclass(frozen=True)
 class NoFlyZone:
@@ -29,6 +33,7 @@ class Limits:
     default_alt_cm: float
     min_battery_pct: float
     link_timeout_s: float
+    fixed_alt: bool = False   # true = z_cm 없는 goto·귀환은 항상 default_alt_cm (v0.7, 시연 전 고도 고정)
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,43 @@ class VisionCfg:
     stale_s: float = 1.0          # 마지막 값을 받은 뒤 이 시간이 지나면 명령 누적 추정으로 넘어간다
     min_confidence: float = 0.0   # 이보다 낮은 confidence는 버린다 (LOW_CONFIDENCE)
     margin_m: float = 0.1         # 지도 경계 밖 이만큼까지는 받아 준다 (추정 오차 여유)
+
+
+@dataclass(frozen=True)
+class VideoCfg:
+    """실시간 영상 (docs/api.md 8·10.2장). send_* 값은 vision/ 연결 프로그램용이라 서버는 쓰지 않는다."""
+    max_frame_kb: float = 300.0   # 이보다 큰 장은 버린다
+    max_fps: float = 10.0         # 앱 하나에 보내는 초당 최대 장수
+    stale_s: float = 2.0          # 이 시간 동안 새 장이 없으면 "영상 끊김"
+
+
+@dataclass(frozen=True)
+class IncidentCfg:
+    """사건 보고 (docs/api.md 9장). 서버가 쓰는 값만."""
+    same_place_m: float = 0.15    # 슬롯이 없을 때 이 거리 안이면 같은 사건
+    dedup_s: float = 30.0         # 같은 슬롯/장소가 이 시간 안에 다시 오면 중복
+    keep: int = 20                # 메모리에 두는 최근 사건 수
+    max_photo_kb: float = 500.0   # 사진 한 장 최대 크기 (디코딩 후)
+
+
+@dataclass(frozen=True)
+class BridgeCfg:
+    """vision/ 연결 프로그램 (docs/api.md 11장). 서버는 default_mode만 쓴다."""
+    default_mode: str = "tt_down"
+
+
+@dataclass(frozen=True)
+class PhotoSlot:
+    """사건 사진 슬롯 S1~S4 ([[photo_slots]], 지도 cm)."""
+    slot: int
+    name: str
+    center_cm: tuple[float, float]
+    corners_cm: list[tuple[float, float]]
+
+    def to_json(self) -> dict:
+        return {"slot": self.slot, "name": self.name,
+                "center_cm": {"x_cm": self.center_cm[0], "y_cm": self.center_cm[1]},
+                "corners_cm": [list(p) for p in self.corners_cm]}
 
 
 @dataclass(frozen=True)
@@ -72,6 +114,9 @@ class TelloCfg:
     auto_reset_after_emergency: bool = True  # sim 전용
     max_height_cm: float = 0.0  # 기체 높이 상한(기체 cm). 0이면 없음. 시뮬레이터는 높이 센서가 약 29.8 m에서 멈춘다
     land_descend_to_cm: float = 0.0  # 착륙 전에 이 높이(기체 cm)까지 go로 먼저 내려온다. 0이면 바로 land
+    keepalive_s: float = 0.0    # real: 비행 중 이 시간 동안 명령이 없으면 'rc 0 0 0 0'을 보낸다(TT는 15초 무명령이면 스스로 착륙). 0이면 끔
+    ground_h_cm: float = 0.0    # real: 비행 중인데 TT 높이(h)가 이 값 이하로 ground_s초 이어지면 '스스로 착륙'으로 본다. 0이면 끔
+    ground_s: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -145,6 +190,10 @@ class Settings:
     real: TelloCfg = field(default_factory=TelloCfg)
     sim_calibration: SimCalibration = field(default_factory=SimCalibration)
     vision: VisionCfg = field(default_factory=VisionCfg)
+    video: VideoCfg = field(default_factory=VideoCfg)
+    incident: IncidentCfg = field(default_factory=IncidentCfg)
+    bridge: BridgeCfg = field(default_factory=BridgeCfg)
+    photo_slots: list[PhotoSlot] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -178,6 +227,16 @@ def _geo(table: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
 
 
+def _photo_slots(items: list[dict[str, Any]]) -> list[PhotoSlot]:
+    out = []
+    for it in items:
+        c = it["center_cm"]
+        out.append(PhotoSlot(slot=int(it["slot"]), name=str(it.get("name", f"S{it['slot']}")),
+                             center_cm=(float(c[0]), float(c[1])),
+                             corners_cm=[(float(p[0]), float(p[1])) for p in it.get("corners_cm", [])]))
+    return out
+
+
 def load_settings(path: str | Path | None = None) -> Settings:
     path = Path(path) if path else DEFAULT_SETTINGS_PATH
     with open(path, "rb") as f:
@@ -191,12 +250,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
         default_alt_cm=float(lim["default_alt_cm"]),
         min_battery_pct=float(lim["min_battery_pct"]),
         link_timeout_s=float(lim["link_timeout_s"]),
+        fixed_alt=bool(lim.get("fixed_alt", False)),
     )
     zones = [
         NoFlyZone(name=str(z.get("name", "")), polygon_cm=[(float(p[0]), float(p[1])) for p in z["polygon_cm"]])
         for z in raw.get("no_fly_zones", [])
     ]
-    real_defaults = TelloCfg(go_axes="sdk")
+    real_defaults = TelloCfg(go_axes="sdk", keepalive_s=5.0, ground_h_cm=10.0, ground_s=1.0)
     sim_defaults = TelloCfg(go_axes="sim")
     s = Settings(
         map_width_cm=float(raw["map"]["width_cm"]),
@@ -213,6 +273,10 @@ def load_settings(path: str | Path | None = None) -> Settings:
         real=_sub(TelloCfg, raw.get("real"), real_defaults),
         sim_calibration=_sub(SimCalibration, raw.get("sim_calibration")),
         vision=_sub(VisionCfg, raw.get("vision")),
+        video=_sub(VideoCfg, raw.get("video")),
+        incident=_sub(IncidentCfg, raw.get("incident")),
+        bridge=_sub(BridgeCfg, raw.get("bridge")),
+        photo_slots=_photo_slots(raw.get("photo_slots", [])),
         raw=raw,
     )
     validate(s)
@@ -241,6 +305,14 @@ def validate(s: Settings) -> None:
             errs.append(f"[{name}] pos_source '{src}'는 {' | '.join(ok)} 중 하나여야 합니다")
     if s.vision.stale_s <= 0 or s.vision.margin_m < 0:
         errs.append("[vision] stale_s > 0, margin_m >= 0 이어야 합니다")
+    if s.bridge.default_mode not in VISION_MODES:
+        errs.append(f"[bridge] default_mode는 {' | '.join(VISION_MODES)} 중 하나여야 합니다")
+    if s.video.max_fps <= 0 or s.video.stale_s <= 0 or s.video.max_frame_kb <= 0:
+        errs.append("[video] max_fps, stale_s, max_frame_kb는 0보다 커야 합니다")
+    if s.incident.keep < 1 or s.incident.max_photo_kb <= 0:
+        errs.append("[incident] keep >= 1, max_photo_kb > 0 이어야 합니다")
+    if len({p.slot for p in s.photo_slots}) != len(s.photo_slots):
+        errs.append("[[photo_slots]] slot 번호가 겹칩니다")
     for spec in (s.sim_calibration.map_x_from, s.sim_calibration.map_y_from):
         if spec not in ("+x", "-x", "+z", "-z"):
             errs.append(f"[sim_calibration] 축 설정 '{spec}'이 잘못됐습니다 (+x -x +z -z)")

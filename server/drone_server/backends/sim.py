@@ -38,6 +38,18 @@ def _import_fake_djitellopy(python_dir: str):
 
 
 class SimBackend(TelloBackend):
+    has_truth = True
+
+    def truth_pose(self) -> Pose | None:
+        """시뮬레이터 참값(world_x/world_z)을 지도 cm로 (GET /sim/truth, docs/api.md 12장).
+        pos_source와 상관없이 마지막으로 읽은 상태에서 계산한다."""
+        raw = self._raw
+        if "world_x" not in raw or "world_z" not in raw:
+            return None
+        truth = SimTruthProvider(self._calib)
+        truth.update(raw)
+        return truth.pose()
+
     def _start_pose(self, raw: dict) -> Pose:
         # 시뮬레이터는 드론 시작 위치가 고정이다. 보정값으로 그 위치를 지도 좌표로 바꿔
         # 추정의 출발점으로 쓴다 (실제 드론은 home에 놓고 켠다).

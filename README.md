@@ -1,38 +1,80 @@
-# 캠퍼스 경비원 보조 드론 — 제어 앱 & 중계 서버
+# 캠퍼스 경비원 보조 드론 — 제어 앱 · 중계 서버 · 위치 인식
 
-대학교 조별과제로 만든 **실내 축소 캠퍼스 지도 위를 나는 경비 보조 드론**의 제어 시스템입니다.
-폰 앱에서 지도 위 목표 지점을 찍으면, 중계 서버가 안전 검사를 거쳐 드론(DJI RoboMaster TT)을 그 지점으로 보냅니다.
+대학교 조별과제로 만든 **실내 축소 캠퍼스 지도(2.5m × 2.5m) 위를 나는 경비 보조 드론** 시스템입니다.
+폰 앱에서 지도 위 목표 지점(또는 사건 사진 슬롯)을 누르면, 중계 서버가 안전 검사를 거쳐 드론(DJI RoboMaster TT)을 보냅니다.
+드론 아래를 보는 카메라 영상으로 **드론 위치를 알아내고**, 사건 사진 슬롯 위에 멈추면 **사진을 찍어 앱에 알립니다.**
+
+> 진척 상황·시험 결과·남은 일은 **[docs/progress.md](docs/progress.md)** 에 정리되어 있습니다.
 
 ```
-[안드로이드 앱] ⇄ WebSocket(JSON, cm) ⇄ [중계 서버 (Python, PC/라즈베리파이)] ⇄ [드론 또는 Unity 시뮬레이터]
-                                              ▲
-                     [카메라 위치 추정 코드] ─ POST /vision/pose (m)
+                       ┌───────────── 노트북 ──────────────────────────────────────┐
+ [드론 카메라]  영상 → │ [위치 인식 연결 프로그램 vision/] ─ 위치·사건 사진·영상 ─→ │
+  TT 하단(흑백)        │                                      [중계 서버 server/]   │ ⇄ [드론 RoboMaster TT]
+  또는 XIAO ESP32       └──────────────────────────────────────────────┬────────────┘     (또는 가짜 드론·Unity 시뮬레이터)
+                                                                     WebSocket
+                                                                  [안드로이드 앱 app/]
 ```
 
-## 구성
+## 무엇을 할 수 있나
+- **지도 위 출동:** 지도에서 목표를 찍고 확인 → 드론이 이륙해 그 지점으로 이동. 정지·착륙·귀환·비상정지, 이륙 버튼.
+- **안전장치:** 지도 경계·반경·고도 제한, 배터리 부족 시 출동 거부, 앱 연결이 3초 끊기면 자동 착륙,
+  드론이 스스로 착륙하면 감지해 알림, TT의 "15초 무명령 자동 착륙" 방지.
+- **카메라 위치 인식 (조원 코드 병합):** 바닥 지도의 AprilTag(39개)와 건물·도로 모양으로 드론 위치·방향을 계산해 앱 지도에 표시.
+  카메라 2가지를 **앱에서 전환**(동시 사용 안 함, 성능 비교용):
+  - `TT 하단 카메라` — 드론 내장, 흑백 320×240, AprilTag로 위치 계산
+  - `ESP32 카메라` — 드론에 단 XIAO ESP32(컬러), 건물·도로 색 + AprilTag로 위치 계산
+- **사건 사진 알림:** 지도의 사진 슬롯 S1~S4로 출동해 멈추면 그 영역을 잘라 앱에 알림(목록·지도 표시·사진 확대).
+  AI(LLM) 판별 기능은 조원 코드에 있지만 현재 **꺼 둠**.
+- **실시간 카메라 영상:** 앱의 카메라 버튼으로 드론 카메라 화면 보기(드론 앞쪽이 위로 오게 회전).
+
+## 폴더 구성
 | 폴더 | 내용 |
 |---|---|
-| `app/` | Flutter 안드로이드 앱 (지도, 출동·드래그·확인, 정지·착륙·귀환·비상정지, 드론 상태 표시) |
-| `server/` | 중계 서버 (FastAPI WebSocket, 안전 검사, mock/sim/real 백엔드, 카메라 위치 입력) — `server/README.md` |
-| `config/settings.toml` | 지도 크기, 이륙 지점, 비행 제한, 좌표 보정 등 조정 가능한 값 |
-| `docs/api.md` | 앱 ⇄ 서버 메시지 명세 |
-| `docs/teammate/interface.md` | 연동 설명서 (송수신 형식, 명령별 동작, 서버 실행 방법) |
+| `app/` | Flutter 안드로이드 앱 |
+| `server/` | 중계 서버 (FastAPI WebSocket, 안전 검사, mock/sim/real 백엔드) — [server/README.md](server/README.md) |
+| `vision/` | 위치 인식 연결 프로그램 + **조원 위치 인식 코드 복사본**(`vision/teammate/`) — [vision/README.md](vision/README.md) |
+| `config/settings.toml` | 조정 가능한 모든 값 (지도·이륙 지점·고도·제한·카메라 설정·사진 슬롯) |
+| `docs/api.md` | 앱 ⇄ 서버 ⇄ 연결 프로그램 메시지 명세 (v0.7) |
+| `docs/progress.md` | 진척 상황·시험 결과·남은 일 |
 | `map/` | 바닥 인쇄 지도 원본 (2.5m × 2.5m, EPS/PDF) |
 | `tools/` | 지도 이미지 변환·위경도 정합 스크립트 |
+| `start_real_drone.bat` / `start_demo_no_drone.bat` | **간편 실행 파일** (아래 「실행하기」) |
 
+## 실행하기 (Windows)
+처음 실행할 때는 Python 가상환경을 자동으로 만들고 필요한 패키지를 설치합니다(몇 분 걸림). Python 3.11 이상이 필요합니다.
 
-Unity 시뮬레이터(`RoboMasterTT-Simulator beta/`)는 팀원의 작업물이라 이 저장소에 포함하지 않습니다.
-`sim` 모드로 실행하려면 시뮬레이터 폴더를 프로젝트 루트에 따로 두어야 합니다.
+### 드론 없이 시험 — `start_demo_no_drone.bat` 더블클릭
+가짜 드론 서버와 위치 인식 연결 프로그램(**합성 카메라**: 조원 지도 그림으로 드론 위치에서 보이는 화면을 만들어 실제 위치 인식 코드에 넣음)이 새 창 두 개로 켜집니다.
+앱에서 **이륙 → 보라색 S4 누르기 → 확인** 하면 드론 아이콘이 이동하고, 몇 초 뒤 **사건 알림**이 옵니다. 카메라 아이콘으로 영상도 볼 수 있습니다.
 
-## 빠른 시작 (드론 없이)
-```bash
+### 실제 드론 — `start_real_drone.bat` 더블클릭
+1. 드론을 **정문(지도의 빨간 점)에 앞쪽이 지도 위쪽을 보게 놓고** 전원을 켭니다. (드론 방향 센서는 켤 때 방향을 0°로 삼으므로, 켠 뒤에는 돌리지 않습니다.)
+2. 노트북 Wi-Fi를 드론(`TELLO-…`/`RMTT-…`)에 연결합니다. 인터넷은 휴대폰 USB 테더링 또는 USB Wi-Fi 동글로 따로 연결합니다.
+3. 실행 파일을 더블클릭하면 서버(real) → 연결 프로그램 순서로 켜지고, **앱에 넣을 주소**가 표시됩니다.
+4. 처음 실행 때 Windows 방화벽 창이 뜨면 **허용**(공용·개인 모두)을 누릅니다. (드론 영상 UDP 11111, 앱 접속 8000)
+
+끌 때는 드론을 먼저 착륙시키고, 열린 두 창에서 각각 **Ctrl+C**를 누릅니다. 서버 로그는 `server\logs\server-날짜.log`에 남습니다.
+
+### 명령으로 직접 실행 (참고)
+```powershell
 cd server
-./run_server.bat mock          # Windows (macOS/Linux: docs/teammate/interface.md 8장)
+.\run_server.bat real --vision      # 드론 없이: mock --vision, Unity 시뮬레이터: sim
 ```
-앱은 `app/`에서 `flutter run -d edge`(PC 브라우저) 또는 빌드한 APK로 실행하고, ⚙에 서버 주소를 입력합니다.
-자세한 내용은 `docs/teammate/interface.md`를 참고하세요.
+```powershell
+cd vision
+.\run_bridge.bat                    # 서버를 먼저 켠 뒤 실행 (옵션: --help)
+```
+
+### 앱
+- 안드로이드: 빌드한 APK를 설치 → 오른쪽 위 ⚙에 노트북 주소 입력(예: `192.168.0.10`).
+- PC 브라우저(개발용): `app/`에서 `flutter run -d edge`.
+
+## 조원 작업물
+- `vision/teammate/` 는 조원의 위치 인식 저장소(`drone-localization-main`)에서 필요한 부분을 **조원 동의를 받아** 복사한 것입니다.
+  출처·복사 날짜·고친 곳은 [vision/teammate/SOURCE.md](vision/teammate/SOURCE.md)에 있습니다. API 키 등 비밀 정보는 포함하지 않습니다.
+- Unity 시뮬레이터(`RoboMasterTT-Simulator beta/`)는 팀원의 작업물이라 이 저장소에 포함하지 않습니다. `sim` 모드로 실행하려면 프로젝트 루트에 따로 둡니다.
 
 ## 지도 데이터 출처
-지도(`KAIST_map.osm`, `map/`, `app/assets/map.png` 및 이를 바탕으로 한 좌표 정합 값)는
+지도(`KAIST_map.osm`, `map/`, `app/assets/map.png`, 조원 지도 파일 및 이를 바탕으로 한 좌표 정합 값)는
 **© OpenStreetMap contributors** 의 데이터를 사용했으며, [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/)에 따라 이용할 수 있습니다.
 자세한 내용: https://www.openstreetmap.org/copyright

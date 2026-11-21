@@ -14,11 +14,11 @@ from typing import Any, Awaitable, Callable
 
 from .backends.base import DroneBackend
 from .safety import SafetyError, check_battery, check_target, clamp_alt
-from .settings import Settings
+from .settings import VISION_MODES, Settings
 
 log = logging.getLogger("drone_server.controller")
 
-COMMANDS = ("takeoff", "goto", "stop", "land", "return_home", "emergency")
+COMMANDS = ("takeoff", "goto", "stop", "land", "return_home", "emergency", "set_vision_mode")
 FLIGHT_MODES = ("taking_off", "hovering", "moving", "returning", "landing")
 
 EventSink = Callable[[dict], Awaitable[None]]
@@ -44,10 +44,12 @@ def _num(v: Any) -> float | None:
 
 
 class Controller:
-    def __init__(self, settings: Settings, backend: DroneBackend, emit: EventSink | None = None):
+    def __init__(self, settings: Settings, backend: DroneBackend, emit: EventSink | None = None,
+                 vision_link: Any = None):
         self.s = settings
         self.b = backend
         self._emit = emit
+        self.vision_link = vision_link  # VisionLink (위치 추적 모드, docs/api.md 11장). None이면 state.vision 없음
         self.mode = "idle"
         self.target: tuple[float, float] | None = None
         self._task: asyncio.Task | None = None
@@ -64,17 +66,31 @@ class Controller:
 
     def state_message(self) -> dict:
         t = self.b.telemetry()
-        return {
+        pos = t.pos.to_json() if t.pos else None
+        if pos is not None and t.vision_z_cm is not None:
+            pos["z_cm"] = round(t.vision_z_cm, 1)  # 카메라 추정 높이는 표시에만 (7.2 z_m)
+        msg = {
             "type": "state",
             "ts": round(time.time(), 3),
             "connected": t.connected,
             "flying": t.flying,
             "mode": self.mode,
-            "pos": t.pos.to_json() if t.pos else None,
+            "pos": pos,
             "pos_source": t.pos_source,
             "target": {"x_cm": round(self.target[0], 1), "y_cm": round(self.target[1], 1)} if self.target else None,
             "battery_pct": None if t.battery_pct is None else int(round(t.battery_pct)),
         }
+        if self.vision_link is not None:
+            msg["vision"] = self.vision_link.state()
+        return msg
+
+    def _default_z(self, t) -> float:
+        """z_cm을 생략한 goto·귀환의 고도 (docs/api.md 4.1).
+        fixed_alt = true → 항상 default_alt_cm (v0.7, 시연 전 고도 고정)
+        false → 비행 중이면 현재 고도를 min~max로 맞춘 값, 착지 상태면 default_alt_cm"""
+        if self.s.limits.fixed_alt or not (t.flying and t.pos):
+            return self.s.limits.default_alt_cm
+        return clamp_alt(self.s, t.pos.z_cm)
 
     def note_alive(self) -> None:
         """제어 앱의 ping(또는 명령)을 받았을 때 호출."""
@@ -123,9 +139,12 @@ class Controller:
             self.mode = "taking_off"
             await self.b.takeoff()
         self.mode = "moving"
-        await self.b.move_to(x, y, z)
+        sent = await self.b.move_to(x, y, z)
         self.mode = "hovering"
         self.target = None
+        if sent == 0:
+            await self.event("info", "TARGET_TOO_CLOSE",
+                             "목표가 현재 위치에서 20cm 이내라 이동하지 않았습니다 (드론 최소 이동 거리)")
 
     async def _m_land(self) -> None:
         self.mode = "landing"
@@ -197,8 +216,8 @@ class Controller:
             if z is None:
                 raise SafetyError("BAD_REQUEST", "z_cm은 숫자여야 합니다")
         t = self._require_connected()
-        if z is None:  # 생략 시 현재 고도 (착지 상태면 기본 고도)
-            z = clamp_alt(self.s, t.pos.z_cm) if (t.flying and t.pos) else self.s.limits.default_alt_cm
+        if z is None:
+            z = self._default_z(t)
         from_xy = (t.pos.x_cm, t.pos.y_cm) if t.pos else None
         check_target(self.s, x, y, z, from_xy)
         self._require_not_landing(t)
@@ -207,6 +226,8 @@ class Controller:
         check_battery(self.s, t.battery_pct)
         self.note_alive()
         await self._cancel_mission()
+        log.info("goto 목표 (%.1f, %.1f, %.1f) cm, 현재 %s", x, y, z,
+                 f"({t.pos.x_cm:.1f}, {t.pos.y_cm:.1f}, {t.pos.z_cm:.1f}) cm [{t.pos_source}]" if t.pos else "모름")
         self.target = (x, y)
         self.mode = "moving" if t.flying else "taking_off"
         self._start(self._m_goto(x, y, z))
@@ -237,7 +258,7 @@ class Controller:
             return
         if self.mode == "taking_off":
             raise SafetyError("BUSY", "이륙 중입니다. 잠시 뒤 다시 보내 주세요")
-        z = clamp_alt(self.s, t.pos.z_cm) if t.pos else self.s.limits.default_alt_cm
+        z = self._default_z(t)
         await self._cancel_mission()
         self.mode, self.target = "returning", (self.s.home_x_cm, self.s.home_y_cm)
         self._start(self._m_return_home(z))
@@ -254,6 +275,20 @@ class Controller:
         self.mode = "emergency"
         self.target = None
         await self.event("warn", "EMERGENCY_STOP", "비상 정지: 모터를 껐습니다")
+
+    async def _c_set_vision_mode(self, msg: dict) -> None:
+        """위치 추적 카메라 전환 (docs/api.md 11장). 착지(idle)·호버링 중에만.
+        비상 정지 뒤 드론이 바닥에 있을 때(emergency + 착지)도 안전하므로 받는다."""
+        mode = msg.get("mode")
+        if mode not in VISION_MODES:
+            raise SafetyError("BAD_REQUEST", f"mode는 {' | '.join(VISION_MODES)} 중 하나여야 합니다")
+        if self.vision_link is None:
+            raise SafetyError("BAD_REQUEST", "이 서버는 위치 추적 모드 전환을 지원하지 않습니다")
+        t = self.b.telemetry()
+        settled = self.mode in ("idle", "hovering") or (self.mode == "emergency" and not t.flying)
+        if not settled:
+            raise SafetyError("BUSY", "착지 상태나 호버링 중에만 카메라를 바꿀 수 있습니다")
+        self.vision_link.set_mode(mode)
 
     # ------------------------------------------------------------------ 감시
     async def watchdog_once(self) -> None:
@@ -284,7 +319,15 @@ class Controller:
         elif not t.flying:
             self._low_batt_warned = False
 
-        # 드론이 스스로 내려앉은 경우 (예: 실제 TT의 저전압 자동 착륙)
+        # 드론이 스스로 내려앉은 경우 (실제 TT: 배터리 부족·15초 무명령·충돌 등 — 백엔드가 높이로 판단)
+        if getattr(self.b, "self_landed", False):
+            self.b.self_landed = False
+            if self.mode not in ("landing", "emergency", "idle"):
+                async with self._lock:
+                    await self._cancel_mission()
+                    self.mode, self.target = "idle", None
+                await self.event("warn", "DRONE_LANDED_ITSELF",
+                                 "드론이 스스로 착륙했습니다 (배터리 부족·명령 끊김·충돌 등). 상태를 확인하세요")
         if not t.flying and not self.busy and self.mode in FLIGHT_MODES:
             self.mode = "idle"
             self.target = None

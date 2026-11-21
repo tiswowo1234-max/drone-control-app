@@ -1,0 +1,17 @@
+resolution:
+  width: 320
+  height: 240
+orientation:
+  rotation_deg: 0            # clockwise, 0 / 90 / 180 / 270
+  flip_horizontal: false    # applied after rotation
+  flip_vertical: false
+calibration:
+  enabled: false
+  calibration_file: null    # NPZ, relative to this YAML
+color:
+  brightness: 1.0
+  bgr_gains: [1.0, 1.0, 1.0]
+localization:
+  height_m: null            # map-equivalent height if composing span from height and HFOV
+  hfov_deg: null             # effective horizontal FOV after orientation
+  nominal_span_m: null      # reference frame width in map meters; takes priority

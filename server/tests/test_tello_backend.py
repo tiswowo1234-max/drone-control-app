@@ -213,3 +213,72 @@ def test_settings_validation_rejects_bad_axes():
     s = load_settings()
     with pytest.raises(ValueError):
         validate(replace(s, sim_calibration=replace(s.sim_calibration, map_x_from="x")))
+
+
+# ---------------------------------------------------------------- 착륙·정지 전 stop은 진행 중 명령이 있을 때만 (2026-11-21 실물 시험)
+
+class InterruptibleTello(FakeSimTello):
+    """실제 TT 흉내: go는 시간이 걸리고, stop이 오면 그 구간을 끊는다."""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+        self.stopped = threading.Event()
+
+    def get_current_state(self):
+        return {"bat": 90, "h": self.h, "yaw": 0}
+
+    def go_xyz_speed(self, x, y, z, speed):
+        self.calls.append(("go", x, y, z))
+        self.stopped.wait(3.0)  # stop이 올 때까지(최대 3초) 이동 중
+        self.stopped.clear()
+
+
+def _real_backend(t):
+    stops = []
+
+    def interrupt(tt):
+        stops.append("stop")
+        tt.stopped.set()
+
+    b = TelloBackend(name="real", cfg=TelloCfg(go_axes="sdk", segment_cm=100, land_descend_to_cm=0),
+                     provider=DeadReckoningProvider(Pose(20, 20, 0)), home=Pose(20, 20, 0),
+                     make_cmd_tello=lambda: t, interrupt=interrupt)
+    return b, stops
+
+
+def test_land_while_hovering_sends_no_stop():
+    async def go():
+        t = InterruptibleTello()
+        b, stops = _real_backend(t)
+        await b.connect()
+        await b.takeoff()
+        assert not b.command_in_progress
+        await b.hover()            # 정지 버튼: 이미 멈춰 있으면 아무것도 안 보냄
+        await b.land()
+        assert stops == []         # 호버링 중이면 stop 없이 바로 land
+        assert t.calls[-1] == ("land",) and not b.telemetry().flying
+        await b.close()
+    asyncio.run(go())
+
+
+def test_land_during_move_stops_first_then_lands_quickly():
+    async def go():
+        t = InterruptibleTello()
+        b, stops = _real_backend(t)
+        await b.connect()
+        await b.takeoff()
+        t.h = 80
+        await asyncio.sleep(0.25)
+        mission = asyncio.create_task(b.move_to(200, 20, 80))
+        await asyncio.sleep(0.2)
+        assert b.command_in_progress  # 이동 구간 진행 중
+        mission.cancel()
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        await b.land()
+        assert stops == ["stop"]       # 진행 중이면 stop으로 끊고
+        assert loop.time() - t0 < 1.5  # 구간이 끝나기(3초)를 기다리지 않고 착륙
+        assert t.calls[-1] == ("land",) and not b.command_in_progress
+        await b.close()
+    asyncio.run(go())

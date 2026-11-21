@@ -20,3 +20,6 @@ local.properties
 .vscode/
 Thumbs.db
 desktop.ini
+
+# 서버 실행 로그 (실물 시험 분석용, 로컬에만)
+server/logs/

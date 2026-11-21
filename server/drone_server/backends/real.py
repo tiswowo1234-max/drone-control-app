@@ -34,6 +34,22 @@ def make_position_provider(settings: Settings) -> PositionProvider:
     raise ValueError(f"[real] pos_source는 estimate | mission_pad | vision: {src!r}")
 
 
+def set_camera_mode(t: Any, mode: str) -> None:
+    """위치 추적 카메라 모드를 TT에 반영한다 (docs/api.md 11장).
+
+    tt_down: downvision 1 → streamon (TT가 하단 카메라 영상을 UDP 11111로 노트북에 보낸다).
+             하단 카메라로 먼저 바꾼 뒤 영상을 켠다 — 실물에서 동작이 확인된 사용자 코드의 순서(2026-11-21).
+    esp32:   streamoff (TT 영상은 쓰지 않는다)
+    영상(UDP 11111)은 vision/ 연결 프로그램이 받는다. 서버는 명령만 보내고 영상 포트를 열지 않는다
+    (그래서 djitellopy의 streamon()/get_frame_read() 대신 명령 문자열을 직접 보낸다).
+    """
+    if mode == "tt_down":
+        t.send_control_command("downvision 1")
+        t.send_control_command("streamon")
+    else:
+        t.send_control_command("streamoff")
+
+
 def create_real_backend(settings: Settings) -> TelloBackend:
     try:
         from djitellopy import Tello  # noqa: PLC0415 — 실제 라이브러리
@@ -65,4 +81,5 @@ def create_real_backend(settings: Settings) -> TelloBackend:
         make_cmd_tello=make, make_monitor_tello=None,
         read_state=lambda t: t.get_current_state(),
         interrupt=stop_now,
+        camera_mode=set_camera_mode,
     )

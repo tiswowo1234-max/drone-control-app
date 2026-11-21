@@ -294,6 +294,31 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('이륙 버튼: 착지 상태에서만 켜지고 takeoff를 보낸다', (tester) async {
+      await start(tester); // 기본 state = 호버링
+      ButtonStyleButton btn() => tester.widget<ButtonStyleButton>(find.byKey(const Key('btn-takeoff')));
+      expect(btn().onPressed, isNull); // 날고 있으면 꺼짐
+      link.push(stateMsg(mode: 'idle', pos: const {'x_cm': 20, 'y_cm': 20, 'z_cm': 0, 'yaw_deg': 0}));
+      await tester.pump();
+      expect(btn().onPressed, isNotNull);
+      await tester.tap(find.byKey(const Key('btn-takeoff')));
+      await tester.pump();
+      expect(link.cmds.last['cmd'], 'takeoff');
+      await ack(tester);
+      await finish(tester);
+    });
+
+    testWidgets('이륙 버튼: 배터리 부족이면 보내지 않고 이유를 보여 준다', (tester) async {
+      await start(tester);
+      link.push(stateMsg(mode: 'idle', battery: 13));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('btn-takeoff')));
+      await tester.pump();
+      expect(link.cmds, isEmpty);
+      expect(find.textContaining('이륙할 수 없습니다: 배터리 부족'), findsOneWidget);
+      await finish(tester);
+    });
+
     testWidgets('비상 정지는 확인 후에만 confirm:true로 보낸다', (tester) async {
       await start(tester);
       await tester.tap(find.byKey(const Key('btn-emergency')));

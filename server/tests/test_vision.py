@@ -60,6 +60,7 @@ def test_post_converts_m_to_cm_and_state_follows(settings):
         assert r.status_code == 200 and r.json() == {"ok": True}
         with client.websocket_connect("/ws") as ws:
             ws.receive_json()  # config
+            ws.receive_json()  # incidents (v0.7)
             st = ws.receive_json()
             assert st["type"] == "state" and st["pos_source"] == "vision"
             assert st["pos"]["x_cm"] == 20 and st["pos"]["y_cm"] == 233 and st["pos"]["yaw_deg"] == 45

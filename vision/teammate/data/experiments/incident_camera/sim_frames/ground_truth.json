@@ -1,0 +1,228 @@
+{
+ "camera": {
+  "width": 640,
+  "height": 480,
+  "K": [
+   [
+    554.256,
+    0.0,
+    319.5
+   ],
+   [
+    0.0,
+    554.256,
+    239.5
+   ],
+   [
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "note": "pinhole, no distortion; the same guess localizer.py uses without camera.json"
+ },
+ "frames": [
+  {
+   "file": "frame_00.png",
+   "camera_xy_m": [
+    0.3338,
+    2.2445
+   ],
+   "height_m": 0.3456,
+   "heading_deg": 209.73,
+   "tilt_deg": 9.99,
+   "photos_fully_visible": [],
+   "tags_fully_visible": []
+  },
+  {
+   "file": "frame_01.png",
+   "camera_xy_m": [
+    0.442,
+    0.8297
+   ],
+   "height_m": 0.79,
+   "heading_deg": 154.04,
+   "tilt_deg": 6.96,
+   "photos_fully_visible": [
+    4
+   ],
+   "tags_fully_visible": [
+    19,
+    20,
+    21,
+    22,
+    23,
+    26,
+    27
+   ]
+  },
+  {
+   "file": "frame_02.png",
+   "camera_xy_m": [
+    1.1435,
+    2.2249
+   ],
+   "height_m": 0.3251,
+   "heading_deg": 19.21,
+   "tilt_deg": 4.18,
+   "photos_fully_visible": [
+    2
+   ],
+   "tags_fully_visible": [
+    2
+   ]
+  },
+  {
+   "file": "frame_03.png",
+   "camera_xy_m": [
+    1.2484,
+    1.7679
+   ],
+   "height_m": 0.8349,
+   "heading_deg": 166.03,
+   "tilt_deg": 2.48,
+   "photos_fully_visible": [
+    3
+   ],
+   "tags_fully_visible": [
+    5,
+    6,
+    11
+   ]
+  },
+  {
+   "file": "frame_04.png",
+   "camera_xy_m": [
+    1.5375,
+    1.4998
+   ],
+   "height_m": 0.2671,
+   "heading_deg": 249.34,
+   "tilt_deg": 3.09,
+   "photos_fully_visible": [],
+   "tags_fully_visible": []
+  },
+  {
+   "file": "frame_05.png",
+   "camera_xy_m": [
+    0.6866,
+    0.7054
+   ],
+   "height_m": 0.928,
+   "heading_deg": 216.04,
+   "tilt_deg": 1.1,
+   "photos_fully_visible": [
+    4
+   ],
+   "tags_fully_visible": [
+    15,
+    17,
+    18,
+    20,
+    21,
+    22,
+    23,
+    24,
+    27,
+    38
+   ]
+  },
+  {
+   "file": "frame_06.png",
+   "camera_xy_m": [
+    0.5183,
+    0.9208
+   ],
+   "height_m": 0.3131,
+   "heading_deg": 74.48,
+   "tilt_deg": 8.6,
+   "photos_fully_visible": [],
+   "tags_fully_visible": []
+  },
+  {
+   "file": "frame_07.png",
+   "camera_xy_m": [
+    1.467,
+    1.151
+   ],
+   "height_m": 0.8867,
+   "heading_deg": 75.03,
+   "tilt_deg": 6.18,
+   "photos_fully_visible": [
+    3
+   ],
+   "tags_fully_visible": [
+    11,
+    34,
+    37
+   ]
+  },
+  {
+   "file": "frame_08.png",
+   "camera_xy_m": [
+    0.2984,
+    2.3058
+   ],
+   "height_m": 0.3019,
+   "heading_deg": 62.97,
+   "tilt_deg": 6.66,
+   "photos_fully_visible": [
+    1
+   ],
+   "tags_fully_visible": [
+    0
+   ]
+  },
+  {
+   "file": "frame_09.png",
+   "camera_xy_m": [
+    1.1114,
+    1.0861
+   ],
+   "height_m": 0.6768,
+   "heading_deg": 136.98,
+   "tilt_deg": 8.91,
+   "photos_fully_visible": [],
+   "tags_fully_visible": [
+    17,
+    18,
+    24,
+    33,
+    37
+   ]
+  },
+  {
+   "file": "frame_10.png",
+   "camera_xy_m": [
+    1.1005,
+    2.1914
+   ],
+   "height_m": 0.2953,
+   "heading_deg": 356.36,
+   "tilt_deg": 9.43,
+   "photos_fully_visible": [
+    2
+   ],
+   "tags_fully_visible": []
+  },
+  {
+   "file": "frame_11.png",
+   "camera_xy_m": [
+    1.0427,
+    1.9481
+   ],
+   "height_m": 0.9078,
+   "heading_deg": 107.85,
+   "tilt_deg": 1.75,
+   "photos_fully_visible": [
+    2
+   ],
+   "tags_fully_visible": [
+    1,
+    2,
+    3,
+    5
+   ]
+  }
+ ]
+}

@@ -8,12 +8,23 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..models import Telemetry
+from ..models import Pose, Telemetry
 
 
 class DroneBackend(ABC):
     name: str = "?"  # config 메시지의 backend 값
     vision = None    # VisionProvider (pos_source = "vision"일 때). POST /vision/pose가 여기로 값을 넣는다
+    vision_mode: str | None = None  # 위치 추적 카메라 모드 (docs/api.md 11장). 연결될 때 이 모드로 카메라를 맞춘다
+    has_truth = False               # GET /sim/truth 지원 여부 (mock, sim)
+
+    async def apply_vision_mode(self, mode: str) -> None:
+        """위치 추적 카메라 모드를 드론에 반영한다 (real: streamon/downvision/streamoff).
+        기본(mock/sim)은 모드만 기억하고 드론에는 아무것도 보내지 않는다."""
+        self.vision_mode = mode
+
+    def truth_pose(self) -> Pose | None:
+        """시험용 참값 위치 (지도 cm, docs/api.md 12장). 모르면 None. has_truth = False면 쓰지 않는다."""
+        return None
 
     @abstractmethod
     async def connect(self) -> None:
@@ -31,8 +42,9 @@ class DroneBackend(ABC):
         """이륙해서 기체 기본 높이에 호버링할 때까지 기다린다."""
 
     @abstractmethod
-    async def move_to(self, x_cm: float, y_cm: float, z_cm: float) -> None:
-        """지도 좌표로 이동. 안전 검사는 컨트롤러가 이미 끝낸 상태로 호출된다."""
+    async def move_to(self, x_cm: float, y_cm: float, z_cm: float) -> int | None:
+        """지도 좌표로 이동. 안전 검사는 컨트롤러가 이미 끝낸 상태로 호출된다.
+        반환: 보낸 이동 구간 수(0 = 이미 목표 근처라 움직이지 않음), 모르면 None."""
 
     @abstractmethod
     async def hover(self) -> None:

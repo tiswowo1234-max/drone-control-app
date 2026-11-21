@@ -2,6 +2,12 @@
 
 이륙·이동·착륙에 실제처럼 시간이 걸리고, 배터리가 줄고, 위치가 직선으로 보간된다.
 속도·배터리 값은 settings.toml [mock]에서 바꾼다.
+
+위치가 두 개다 (v0.7):
+  self.pose  = 서버가 '안다고 생각하는' 위치 (명령 누적 추정). vision 값이 오면 그 값으로 옮겨진다.
+  self.truth = 가짜 드론이 '실제로 있는' 위치. 이동 명령만큼만 움직이고 vision 값에 끌려가지 않는다.
+               GET /sim/truth가 이 값을 주고, 합성 카메라(vision/)가 이 위치에서 보이는 화면을 그린다.
+vision 입력을 쓰지 않으면 두 값은 항상 같다.
 """
 from __future__ import annotations
 
@@ -19,11 +25,13 @@ TICK_S = 0.05
 
 class MockBackend(DroneBackend):
     name = "mock"
+    has_truth = True
 
     def __init__(self, settings: Settings):
         self.s = settings
         self.cfg = settings.mock
         self.pose = Pose(settings.home_x_cm, settings.home_y_cm, 0.0, 0.0)
+        self.truth = Pose(settings.home_x_cm, settings.home_y_cm, 0.0, 0.0)
         self.battery = float(self.cfg.battery_start_pct)
         self.flying = False
         self.connected = False
@@ -47,14 +55,19 @@ class MockBackend(DroneBackend):
             dx, dy, dz = x - self.pose.x_cm, y - self.pose.y_cm, z - self.pose.z_cm
             dist = math.sqrt(dx * dx + dy * dy + dz * dz)
             step = speed * TICK_S
+            k = 1.0 if dist <= step else step / dist
+            self._shift(dx * k, dy * k, dz * k)
             if dist <= step:
                 self.pose.x_cm, self.pose.y_cm, self.pose.z_cm = x, y, z
                 return
-            k = step / dist
-            self.pose.x_cm += dx * k
-            self.pose.y_cm += dy * k
-            self.pose.z_cm += dz * k
             await asyncio.sleep(TICK_S)
+
+    def _shift(self, dx: float, dy: float, dz: float) -> None:
+        """추정 위치와 실제 위치를 같은 변위만큼 움직인다 (명령한 만큼 실제로 움직였다고 가정)."""
+        for p in (self.pose, self.truth):
+            p.x_cm += dx
+            p.y_cm += dy
+            p.z_cm = max(0.0, p.z_cm + dz)
 
     def _require(self) -> None:
         if not self.connected:
@@ -72,7 +85,12 @@ class MockBackend(DroneBackend):
             pos=self.vision.pose() if self.vision else Pose(self.pose.x_cm, self.pose.y_cm, self.pose.z_cm, self.pose.yaw_deg),
             pos_source=self.vision.source if self.vision else "estimate",
             battery_pct=round(self.battery),
+            vision_z_cm=self.vision.display_z_cm() if self.vision else None,
         )
+
+    def truth_pose(self) -> Pose | None:
+        t = self.truth
+        return Pose(t.x_cm, t.y_cm, t.z_cm, t.yaw_deg)
 
     async def takeoff(self) -> None:
         self._require()
@@ -104,7 +122,7 @@ class MockBackend(DroneBackend):
     async def emergency(self) -> None:
         self._require()
         self.flying = False
-        self.pose.z_cm = 0.0  # 모터 정지 → 그대로 추락
+        self.pose.z_cm = self.truth.z_cm = 0.0  # 모터 정지 → 그대로 추락
 
 
 class _MockPoseProvider(PositionProvider):

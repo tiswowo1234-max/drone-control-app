@@ -27,6 +27,8 @@ class Telemetry:
     pos: Pose | None
     pos_source: str
     battery_pct: float | None
+    # (v0.7) 카메라로 추정한 높이(cm). 앱 표시(state.pos.z_cm)에만 쓰고 비행 제어에는 쓰지 않는다.
+    vision_z_cm: float | None = None
 
 
 class BackendError(RuntimeError):

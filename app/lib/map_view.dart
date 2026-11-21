@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'config.dart';
 import 'map_coords.dart';
 import 'protocol.dart';
+import 'safety.dart';
 
 /// 확대·이동 가능한 지도 + 위에 겹쳐 그리는 표시들
 /// (이륙 지점, 허용 반경, 드론, 현재 이동 목표, 출동 마커).
@@ -19,6 +20,10 @@ class MapView extends StatefulWidget {
     this.marker,
     this.markerOk = true,
     this.onMarkerMoved,
+    this.onSlotTap,
+    this.incidents = const [],
+    this.isIncidentAcked,
+    this.onIncidentTap,
   });
 
   final AppConfig config;
@@ -35,6 +40,16 @@ class MapView extends StatefulWidget {
 
   /// 마커를 끌거나 지도를 눌러 위치를 바꿨을 때 (cm)
   final ValueChanged<Offset>? onMarkerMoved;
+
+  /// 사진 슬롯(번호 표시나 사각형 안)을 눌렀을 때. 화면은 그 중심에 출동 목표를 놓는다.
+  final ValueChanged<PhotoSlot>? onSlotTap;
+
+  /// 지도에 표시할 사건 (사진 위치 `pos`가 있는 것만 그린다)
+  final List<Incident> incidents;
+
+  /// 확인한 사건이면 true (회색으로 그린다)
+  final bool Function(Incident)? isIncidentAcked;
+  final ValueChanged<Incident>? onIncidentTap;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -86,10 +101,10 @@ class _MapViewState extends State<MapView> {
                 height: h,
                 child: GestureDetector(
                   // 출동 중이면 지도를 누른 곳으로 마커를 옮긴다
-                  onTapUp: widget.onMarkerMoved == null
+                  // 슬롯 사각형 안을 누르면 슬롯 출동
+                  onTapUp: (widget.onMarkerMoved == null && widget.onSlotTap == null)
                       ? null
-                      : (d) => widget.onMarkerMoved!(
-                          _clamp(coords.pxToCm(d.localPosition))),
+                      : (d) => _onTap(coords.pxToCm(d.localPosition)),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -100,6 +115,13 @@ class _MapViewState extends State<MapView> {
                         child: IgnorePointer(
                           child: CustomPaint(
                             painter: _RadiusPainter(coords, widget.config),
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _SlotPainter(coords, widget.config.photoSlots),
                           ),
                         ),
                       ),
@@ -120,6 +142,18 @@ class _MapViewState extends State<MapView> {
     );
   }
 
+  void _onTap(Offset cm) {
+    if (widget.onSlotTap != null) {
+      for (final slot in widget.config.photoSlots) {
+        if (pointInPolygon(cm, slot.corners)) {
+          widget.onSlotTap!(slot);
+          return;
+        }
+      }
+    }
+    widget.onMarkerMoved?.call(_clamp(cm));
+  }
+
   Offset _clamp(Offset cm) => Offset(
         cm.dx.clamp(0, widget.config.mapWidthCm),
         cm.dy.clamp(0, widget.config.mapHeightCm),
@@ -132,6 +166,22 @@ class _MapViewState extends State<MapView> {
     return Stack(
       clipBehavior: Clip.none,
       children: [
+        for (final slot in widget.config.photoSlots)
+          _icon(coords.cmToPx(slot.center), s, 30,
+              child: _SlotLabel(
+                slot: slot,
+                onTap: widget.onSlotTap == null ? null : () => widget.onSlotTap!(slot),
+              )),
+        for (final inc in widget.incidents.reversed) // 최신이 위에 오도록
+          if (inc.pos != null)
+            _icon(coords.cmToPx(inc.pos!), s, 32, bottomAnchor: true,
+                child: _IncidentPin(
+                  incident: inc,
+                  acked: widget.isIncidentAcked?.call(inc) ?? false,
+                  onTap: widget.onIncidentTap == null
+                      ? null
+                      : () => widget.onIncidentTap!(inc),
+                )),
         _icon(coords.cmToPx(widget.config.home), s, 28, bottomAnchor: true,
             child: const Tooltip(
                 message: '이륙·귀환 지점',
@@ -220,6 +270,93 @@ class _DroneIcon extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 사진 슬롯 번호 표시 (누르면 슬롯 출동)
+class _SlotLabel extends StatelessWidget {
+  const _SlotLabel({required this.slot, this.onTap});
+
+  final PhotoSlot slot;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '사진 슬롯 ${slot.name} (누르면 출동 목표)',
+      child: GestureDetector(
+        key: Key('slot-${slot.slot}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.purple.shade700.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.white, width: 1.5),
+          ),
+          child: Center(
+            child: Text(slot.label,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 사건 위치 표시 (미확인 = 빨강, 확인함 = 회색)
+class _IncidentPin extends StatelessWidget {
+  const _IncidentPin({required this.incident, required this.acked, this.onTap});
+
+  final Incident incident;
+  final bool acked;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '사건 ${incident.placeText}${acked ? ' (확인함)' : ''}',
+      child: GestureDetector(
+        key: Key('incident-pin-${incident.key}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Icon(
+          Icons.report,
+          size: 32,
+          color: acked ? Colors.grey.shade600 : Colors.red.shade700,
+          shadows: const [Shadow(color: Colors.white, blurRadius: 6)],
+        ),
+      ),
+    );
+  }
+}
+
+/// 사진 슬롯 사각형
+class _SlotPainter extends CustomPainter {
+  _SlotPainter(this.coords, this.slots);
+
+  final MapCoords coords;
+  final List<PhotoSlot> slots;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fill = Paint()..color = Colors.purple.withValues(alpha: 0.15);
+    final line = Paint()
+      ..color = Colors.purple.shade700
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    for (final slot in slots) {
+      if (slot.corners.length < 3) continue;
+      final path = Path()
+        ..addPolygon([for (final c in slot.corners) coords.cmToPx(c)], true);
+      canvas.drawPath(path, fill);
+      canvas.drawPath(path, line);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SlotPainter old) =>
+      old.coords.viewSize != coords.viewSize || old.slots != slots;
 }
 
 /// home 중심의 최대 비행 반경을 점선 대신 반투명 원으로 표시

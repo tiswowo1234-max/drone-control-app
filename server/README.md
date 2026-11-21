@@ -1,6 +1,6 @@
 # 중계 서버 (앱 ⇄ 드론)
 
-- 명세: `docs/api.md` v0.6 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
+- 명세: `docs/api.md` v0.7 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
 - 구조: 앱 ⇄ (WebSocket `ws://<PC IP>:8000/ws`) ⇄ 이 서버 ⇄ 백엔드 `mock` | `sim` | `real`
 
 | 백엔드 | 무엇과 연결? | 언제 쓰나 |
@@ -107,18 +107,80 @@ config → 지도 밖 좌표 거부(OUT_OF_BOUNDS) → confirm 없는 비상정�
 - `ts`(사진 찍은 시각)를 보내면 순서가 뒤바뀐 오래된 값은 서버가 무시한다.
 - 실제 드론에서 쓰려면 `settings.toml`의 `[real] pos_source = "vision"`. 서버는 구간 이동마다 이 위치를 다시 읽어 목표로 보정한다.
 
+## 3-1. 사건 사진·실시간 영상·카메라 모드 시험하기 (v0.7) — 드론·카메라 없이
+
+2단계에서는 `vision/` 연결 프로그램이 ① 위치(`POST /vision/pose`) ② 사건 사진(`POST /vision/incident`)
+③ 카메라 영상(`ws /vision/video`)을 서버에 보낸다. 아래 가짜 도구로 연결 프로그램 없이 서버를 확인할 수 있다.
+
+| 가짜 도구 | 대신하는 것 | 하는 일 |
+|---|---|---|
+| `tools\fake_incident.py` | 연결 프로그램의 슬롯 촬영 | 슬롯(S1~S4) 사진을 한 장 보고한다 |
+| `tools\fake_video.py` | 연결 프로그램의 영상 송신 | 움직이는 시험 영상을 보낸다. 앱이 카메라를 바꾸면 영상 색이 바뀐다 (esp32 = 컬러, tt_down = 흑백) |
+| `tools\video_check.py` | 앱 | 사건 알림·영상 장 수·카메라 모드(`state.vision`)를 글자로 보여 준다 |
+
+**PowerShell 창을 4개** 쓴다. 창 2~4는 모두 먼저 `cd C:\dev\drone-control-app\server`를 입력한다.
+
+1. **창 1 — 서버 켜기**
+   ```
+   cd C:\dev\drone-control-app\server
+   .\run_server.bat mock --vision
+   ```
+2. **창 2 — 가짜 영상 보내기**
+   ```
+   .venv\Scripts\python.exe tools\fake_video.py
+   ```
+   `보낸 장 50 (모드 tt_down)` 같은 줄이 5초마다 나오면 된다.
+3. **창 3 — 확인용 클라이언트** (15초 동안 보고, 3초 뒤 카메라를 esp32로 바꿔 본다)
+   ```
+   .venv\Scripts\python.exe tools\video_check.py --switch esp32 --seconds 15 --save last.jpg
+   ```
+   확인할 것:
+   - `[video_status] ... 'live': True` 와 `... 영상 N장 받음`의 N이 계속 늘어난다 → **영상 중계 OK**
+   - `[state.vision] {'mode': 'esp32', ..., 'bridge_mode': 'tt_down'}` (전환 중) 다음에
+     `'bridge_mode': 'esp32'` 줄이 나온다 → **카메라 모드 전환 OK** (창 2에도 `[서버] vision_mode = esp32`)
+   - 끝나면 `last.jpg`가 생긴다. 더블클릭하면 초록 바탕(esp32 컬러) 그림이 보인다.
+4. **창 4 — 가짜 사건 보고** (창 3이 도는 15초 안에)
+   ```
+   .venv\Scripts\python.exe tools\fake_incident.py --slot 4
+   ```
+   - 창 4: `응답: {'ok': True, 'id': 'inc-1'}`와 사진 주소가 나온다. **그 주소를 브라우저에 붙여 넣으면 시험 사진이 보인다.**
+   - 창 3: `[incident] inc-1 슬롯 4 ...`와 `[event] ... INCIDENT_NEW` 가 나온다 → **사건 알림 OK**
+   - 한 번 더 보내면 `'duplicate': True` (같은 슬롯은 `[incident] dedup_s`=30초 동안 한 번만). `--mode esp32`로 보내면 다른 카메라라 새 사건이 된다.
+5. **합성 카메라용 참값 위치:** 브라우저에서 `http://127.0.0.1:8000/sim/truth` →
+   `{"ok":true,"x_m":1.532,"y_m":0.702,"z_m":0.0,"yaw_deg":0.0}` (mock = 가짜 드론의 실제 위치, 처음엔 정문).
+6. **상태 한눈에 보기:** 브라우저 `http://127.0.0.1:8000/`의 `vision_link`(현재 모드, 연결 프로그램 연결 여부, 영상 마지막 장 경과 초,
+   보는 앱 수)와 `incidents`(사건 수).
+7. 다 보면 각 창에서 `Ctrl+C`.
+
+더 해 볼 것:
+- `tools\fake_video.py --switch-delay 3` → 전환 버튼을 누른 뒤 3초 동안 앱/창 3에 "전환 중"(`bridge_mode`가 옛 모드)이 보인다.
+- `tools\fake_video.py --camera-fail` → `camera_ok: False`.
+- 창 2를 끄면 `[video] stale_s`(2초) 뒤 `video_status live: False`("카메라 영상이 없습니다"), `state.vision.bridge_connected: false`.
+
+알아 둘 점:
+- 카메라 모드(`esp32`/`tt_down`)는 **착지 상태나 호버링 중에만** 바꿀 수 있다(이동·이착륙 중이면 `BUSY`). 바꾸면 마지막 카메라 위치를 버리고,
+  새 모드의 위치가 올 때까지 명령 누적 추정(`estimate`)으로 이어 간다. 처음 모드는 `settings.toml [bridge] default_mode`.
+- `POST /vision/pose`에 `mode`를 넣으면 서버의 현재 모드와 다를 때 `WRONG_MODE`로 거부한다(생략하면 검사 안 함). `z_m`은 앱 표시용 높이.
+- 실제 드론(real)은 모드에 맞춰 TT에 `downvision 1` → `streamon`(tt_down) 또는 `streamoff`(esp32)를 보낸다. 서버를 켠 뒤 드론이 연결될 때도 보낸다.
+  TT 영상(UDP 11111)은 **연결 프로그램이 받는다.** 서버는 영상 포트를 열지 않는다. mock/sim은 명령을 보내지 않는다.
+- mock + vision: 가짜 드론은 "서버가 아는 위치"(vision 값으로 맞춰짐)와 "실제 위치"(`/sim/truth`, 이동 명령만큼만 움직임)를 따로 가진다.
+  합성 카메라는 실제 위치로 화면을 그리므로, 위치 인식이 틀려도 실제 위치가 그 틀린 값으로 끌려가지 않는다.
+- 사건·사진은 메모리에만 둔다(최근 `[incident] keep`개). 서버를 다시 켜면 사라진다.
+
 ## 4. 테스트
 ```
 cd C:\dev\drone-control-app\server
 .venv\Scripts\python.exe -m pytest -q
 ```
 안전 검사, 프로토콜(WebSocket), mock 비행 흐름, sim/real 공통 백엔드(가짜 Tello)를 검사한다. Unity는 필요 없다.
+v0.7 기능(고도 고정, 카메라 모드 전환과 real의 streamon/downvision/streamoff, 사건 보고·중복·사진, 영상 중계·초당 장수 제한,
+`/sim/truth`, 느린 영상 앱이 state·자동 착륙을 늦추지 않는지)은 `tests/test_v07.py`.
 
 ---
 
 ## 5. 동작 규칙 (명세에 없는 세부)
 
-- 연결하면 `config` 1회 → 바로 `state` 1회 → 이후 `[server] state_hz`(5Hz)로 `state`.
+- 연결하면 `config` 1회 → `incidents`(최근 사건 목록) 1회 → 바로 `state` 1회 → 이후 `[server] state_hz`(5Hz)로 `state`.
 - 앱은 1초마다 `ping`. 비행 중 `link_timeout_s`(3초) 동안 명령권 앱의 `ping`/`cmd`가 없으면 자동 착륙 + event `LINK_LOST_LANDING`.
 - 명령은 **명령권 앱**(마지막에 연결한 앱)만 가능. 다른 앱의 `cmd` → ack `BUSY`. 새 앱이 연결되면 그 앱이 명령권을 갖는다.
 - **명령권 넘겨받기:** 명령권 앱의 연결이 끊기면 남은 앱 중 가장 최근에 연결된 앱이 즉시 넘겨받고, 모든 앱에 event `CONTROLLER_CHANGED`.
@@ -126,11 +188,28 @@ cd C:\dev\drone-control-app\server
 - `goto`: 착지 상태면 이륙부터. 이동 중 새 `goto`는 기존 이동을 취소하고 새 목표로. 이륙·착륙 중에는 `BUSY`.
 - `stop`/`land`/`emergency`는 진행 중 명령을 취소하고 바로 처리한다.
   - sim: 시뮬레이터가 진행 중 이동을 끊지 못해서, 한 구간(`[sim] segment_cm`, 약 2초)이 끝난 뒤 멈춘다. `emergency`는 즉시.
-  - real: SDK `stop` 명령으로 즉시 멈춘다(예정).
+  - real: **진행 중인 명령(이동 구간 등)이 있을 때만** SDK `stop`으로 끊고 그 명령이 끝나기를 기다린 뒤 처리한다.
+    호버링 중(진행 중 명령 없음)이면 `stop` 없이 바로 `land`를 보낸다 — 멈춰 있는 TT에 `stop`과 `land`를 연달아 보내
+    착륙이 늦거나 다시 눌러야 하던 문제를 줄이기 위해(2026-11-21 실물 시험).
+- **real 유지 신호:** TT는 **15초 동안 명령을 못 받으면 스스로 착륙**한다. 그래서 비행 중 `[real] keepalive_s`(5초) 동안 다른 명령이 없으면
+  `rc 0 0 0 0`(제자리, 응답 없음)을 보낸다(2026-11-21 실물 시험: 이륙 뒤 28초 무명령 → TT 자체 착륙).
+- **real 자체 착륙 감지:** 비행 중인데 TT 높이(`h`)가 `[real] ground_h_cm`(10cm) 이하로 `ground_s`(1초) 이어지면 스스로 착륙한 것으로 보고
+  `mode = idle` + event `DRONE_LANDED_ITSELF`. 바닥에 있는데 TT가 `land`를 `error`로 거절하면 실패 대신 '이미 착지'로 처리한다.
+- **이동 기록:** `goto`마다 목표·현재 위치·위치 출처·구간을 로그에 남긴다. 목표가 20cm 이내라 움직이지 않으면 event `TARGET_TOO_CLOSE`.
+- **로그 파일:** 서버 창에 나오는 로그는 `server\logs\server-날짜.log`에도 저장된다(하루 한 파일, 실행마다 `===== 서버 시작` 구분선).
+  실물 시험에서 문제가 생기면 이 파일을 보면 된다. git에는 올리지 않는다.
 - 출동(`takeoff`/`goto`)만 배터리 검사. `land`/`return_home`/`stop`은 배터리가 낮아도 받는다.
 - 이미 그 상태인 명령(`takeoff` 중복, 착지 중 `land`/`stop`)은 ok만 돌려준다. 착지 상태 `return_home`은 ok + event `ALREADY_LANDED`.
 - 추가 event 코드: `EMERGENCY_STOP`, `LOW_BATTERY`(비행 중 배터리 < min), `DRONE_CONNECTED`, `DRONE_DISCONNECTED`, `CMD_FAILED`, `CONTROLLER_CHANGED`, `BAD_REQUEST`(JSON 오류).
 - 정수인 숫자는 JSON 정수로 보낸다 (`250.0` → `250`).
+- **고도 고정 (`[limits] fixed_alt = true`):** `z_cm` 없는 `goto`와 `return_home`(귀환 이동)은 `default_alt_cm`으로 난다.
+  `false`면 예전처럼 현재 고도(min~max로 맞춤).
+- `set_vision_mode`: 명령권 앱만, `idle`·`hovering`(그리고 비상정지 후 바닥에 있을 때)만. 드론 카메라 명령이 실패하면(real) ack는 ok이고 event `CMD_FAILED`.
+- 사건 중복: 같은 슬롯 + **같은 카메라 모드**가 `dedup_s` 안에 다시 오면 중복. 슬롯이 없으면 `same_place_m` 안의 위치.
+  `lat`/`lon`을 안 보내면 서버가 `[geo]`로 계산해 넣는다.
+- `/sim/truth`: real은 HTTP 400 `BAD_REQUEST`, sim에서 아직 시뮬레이터 상태를 못 읽었으면 400 `NOT_CONNECTED`. `yaw_deg`는 2장 기준(지도 위쪽 0, 시계 +).
+- 영상: 앱마다 따로 보내며(초당 `[video] max_fps`, 최신 장만), 한 장 보내기가 5초 넘게 걸리는 앱은 연결을 끊는다.
+  `[video] max_frame_kb`보다 크거나 JPEG가 아닌 장은 버린다(`GET /`의 `frames_dropped`).
 
 ## 6. 코드 구조
 ```
@@ -140,7 +219,9 @@ server/
     settings.py      settings.toml 읽기·검증
     safety.py        안전 검사 (경계, 반경, 고도, 금지구역·경로, 배터리)
     controller.py    명령 처리, mode 관리, 감시(ping 끊김·배터리·연결)
-    app.py           FastAPI WebSocket /ws, 상태 push, POST /vision/pose
+    app.py           FastAPI: /ws, 상태 push, /vision/pose, /vision/incident, /vision/video, /ws/video, /sim/truth, 사진
+    vision_link.py   위치 추적 모드(esp32/tt_down), 연결 프로그램 상태, 영상 중계(VideoRelay)
+    incidents.py     사건 보고 검사·중복·메모리 보관
     positioning.py   위치 공급자(PositionProvider: 누적 추정·시뮬 참값·vision·미션패드), 좌표계 변환
     backends/
       base.py        백엔드 인터페이스
@@ -150,6 +231,9 @@ server/
       real.py        실제 TT (진짜 djitellopy)
   tools/ws_check.py         앱 없이 확인하는 클라이언트
   tools/fake_vision.py      가짜 카메라 위치 추정 송신기 (POST /vision/pose)
+  tools/fake_incident.py    가짜 사건 사진 보고 (POST /vision/incident)
+  tools/fake_video.py       가짜 영상 연결 프로그램 (ws /vision/video, 모드 전환에 답함)
+  tools/video_check.py      영상·사건·카메라 모드 확인 클라이언트
   tools/sim_calibrate.py    시뮬레이터 좌표 보정값 계산
   tests/
 ```

@@ -149,6 +149,8 @@ class VisionProvider(PositionProvider):
     - 오래되면 fallback(명령 누적 추정 등)으로 이어 간다 (source = fallback.source, 보통 "estimate").
     - 새 값이 올 때마다 fallback의 기준점도 그 위치로 맞춘다 → 끊겨도 마지막 vision 위치에서 이어진다.
     - yaw가 없으면 fallback(드론 센서) yaw, 높이는 항상 fallback(센서 h).
+      (v0.7) z_m이 오면 display_z_cm()으로 앱 표시에만 쓴다. pose()의 z(비행 제어용)는 계속 센서 값.
+    - 위치 추적 모드를 바꾸면 clear()로 마지막 값을 버린다 → 새 값이 올 때까지 fallback.
     """
 
     def __init__(self, fallback: PositionProvider, stale_s: float = 1.0,
@@ -158,10 +160,12 @@ class VisionProvider(PositionProvider):
         self._clock = clock or time.monotonic
         self._lock = threading.Lock()
         self._fix: tuple[float, float, float | None] | None = None  # (x_cm, y_cm, yaw|None)
+        self._fix_z: float | None = None   # 카메라 추정 높이(cm, 표시용)
         self._fix_at: float | None = None
         self._last_ts: float | None = None
 
-    def submit(self, x_cm: float, y_cm: float, yaw_deg: float | None = None, ts: float | None = None) -> bool:
+    def submit(self, x_cm: float, y_cm: float, yaw_deg: float | None = None, ts: float | None = None,
+               z_cm: float | None = None) -> bool:
         """새 추정값. ts가 이전 값보다 오래된(순서가 뒤바뀐) 값이면 무시하고 False."""
         with self._lock:
             if ts is not None and self._last_ts is not None and ts < self._last_ts:
@@ -169,12 +173,26 @@ class VisionProvider(PositionProvider):
             if ts is not None:
                 self._last_ts = ts
             self._fix = (x_cm, y_cm, yaw_deg)
+            self._fix_z = z_cm
             self._fix_at = self._clock()
         fb = self.fallback.pose()
         z = fb.z_cm if fb else 0.0
         yaw = yaw_deg if yaw_deg is not None else (fb.yaw_deg if fb else 0.0)
         self.fallback.reset(Pose(x_cm, y_cm, z, yaw))
         return True
+
+    def clear(self) -> None:
+        """마지막 카메라 값을 버린다 (위치 추적 모드 전환, docs/api.md 11장).
+        fallback은 이미 마지막 값으로 맞춰져 있으므로 그 위치에서 명령 누적 추정으로 이어 간다."""
+        with self._lock:
+            self._fix = self._fix_z = self._fix_at = self._last_ts = None
+
+    def display_z_cm(self) -> float | None:
+        """신선한 카메라 높이(cm)가 있으면 그 값 (앱 표시용), 없으면 None."""
+        if not self.fresh():
+            return None
+        with self._lock:
+            return self._fix_z
 
     def age_s(self) -> float | None:
         with self._lock:
@@ -193,6 +211,8 @@ class VisionProvider(PositionProvider):
         if not self.fresh():
             return fb
         with self._lock:
+            if self._fix is None:  # 다른 스레드에서 clear()된 직후
+                return fb
             x, y, yaw = self._fix
         return Pose(x, y, fb.z_cm if fb else 0.0,
                     normalize_yaw(yaw) if yaw is not None else (fb.yaw_deg if fb else 0.0))

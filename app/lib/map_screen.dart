@@ -5,16 +5,21 @@ import 'package:flutter/material.dart';
 import 'config.dart';
 import 'drone_client.dart';
 import 'geo.dart';
+import 'incident_screens.dart';
 import 'map_view.dart';
 import 'protocol.dart';
 import 'safety.dart';
 import 'server_address.dart';
+import 'video_screen.dart';
 
 /// 메인 화면: 지도 + 드론 상태 + 출동 + 제어 버튼
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, required this.client});
+  const MapScreen({super.key, required this.client, this.videoConnector});
 
   final DroneClient client;
+
+  /// 실시간 영상 연결 (테스트용, null이면 실제 WebSocket)
+  final LinkConnector? videoConnector;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -26,8 +31,14 @@ class _MapScreenState extends State<MapScreen> {
   /// 출동 목표 마커 위치 (cm). null이면 출동 모드가 아님.
   Offset? _marker;
 
+  /// 마커를 슬롯 중심에 놓았으면 그 슬롯 (마커를 옮기면 null)
+  PhotoSlot? _markerSlot;
+
   /// 명령을 보내고 응답을 기다리는 중
   bool _sending = false;
+
+  /// 위치 추적 카메라 전환 명령을 보내고 응답을 기다리는 중
+  bool _switchingMode = false;
 
   StreamSubscription<DroneEvent>? _eventSub;
 
@@ -58,6 +69,23 @@ class _MapScreenState extends State<MapScreen> {
             backgroundColor: Theme.of(context).colorScheme.inversePrimary,
             actions: [
               IconButton(
+                key: const Key('btn-video'),
+                tooltip: '드론 카메라 실시간 영상',
+                icon: const Icon(Icons.videocam),
+                onPressed: _openVideo,
+              ),
+              IconButton(
+                key: const Key('btn-incidents'),
+                tooltip: '사건 목록',
+                onPressed: _openIncidents,
+                icon: Badge(
+                  key: const Key('incident-badge'),
+                  isLabelVisible: _c.unackedCount > 0,
+                  label: Text('${_c.unackedCount}'),
+                  child: const Icon(Icons.notifications),
+                ),
+              ),
+              IconButton(
                 tooltip: '서버 주소 설정',
                 icon: const Icon(Icons.settings),
                 onPressed: _editServerAddress,
@@ -80,7 +108,14 @@ class _MapScreenState extends State<MapScreen> {
                           markerOk: markerIssue == null,
                           onMarkerMoved: _marker == null
                               ? null
-                              : (cm) => setState(() => _marker = cm),
+                              : (cm) => setState(() {
+                                    _marker = cm;
+                                    _markerSlot = null;
+                                  }),
+                          onSlotTap: _sending ? null : _dispatchToSlot,
+                          incidents: _c.incidents,
+                          isIncidentAcked: _c.isAcked,
+                          onIncidentTap: (i) => openIncidentDetail(context, _c, i),
                         ),
                       ),
                       // 알림은 지도 위쪽에 띄운다 (아래쪽 제어 버튼을 가리지 않도록)
@@ -95,11 +130,12 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
                 _statusPanel(config, st),
+                if (config.visionModes.isNotEmpty) _visionPanel(config, st),
                 if (_marker != null)
                   _dispatchPanel(config, st, markerIssue)
                 else
                   _mainButtons(config),
-                _controlButtons(),
+                _controlButtons(config, st),
               ],
             ),
           ),
@@ -203,7 +239,10 @@ class _MapScreenState extends State<MapScreen> {
       // 측정값(카메라 등)은 초록, 추정값은 주황 → 카메라가 끊겨 추정값으로 바뀌면 바로 보인다
       (
         '위치 출처',
-        posSourceKo(st?.posSource),
+        // 카메라로 위치를 잡는 중이면 어느 카메라인지도 보여 준다 (성능 비교용)
+        st?.posSource == 'vision' && st?.vision?.mode != null
+            ? '${posSourceKo(st!.posSource)}·${visionModeShort(st.vision!.mode)}'
+            : posSourceKo(st?.posSource),
         st?.posSource == null
             ? null
             : (posSourceMeasured(st!.posSource)
@@ -252,8 +291,10 @@ class _MapScreenState extends State<MapScreen> {
               label: '출동',
               icon: Icons.flight_takeoff,
               color: Colors.indigo,
-              onPressed: () => setState(() => _marker = Offset(
-                  config.mapWidthCm / 2, config.mapHeightCm / 2)),
+              onPressed: () => setState(() {
+                _marker = Offset(config.mapWidthCm / 2, config.mapHeightCm / 2);
+                _markerSlot = null;
+              }),
             ),
           ),
           const SizedBox(width: 8),
@@ -292,8 +333,12 @@ class _MapScreenState extends State<MapScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('마커를 끌거나 지도를 눌러 목표 지점을 정하세요',
-              style: TextStyle(color: Colors.black54)),
+          Text(
+              _markerSlot != null
+                  ? '사진 슬롯 ${_markerSlot!.name} — 마커를 끌어 조정할 수 있습니다'
+                  : '마커를 끌거나 지도를 눌러 목표 지점을 정하세요 (보라색 S1~S4 = 사진 슬롯)',
+              key: const Key('dispatch-hint'),
+              style: const TextStyle(color: Colors.black54)),
           Text(
             '목표: x ${m.dx.toStringAsFixed(1)} cm, y ${m.dy.toStringAsFixed(1)} cm',
             key: const Key('marker-coords'),
@@ -315,7 +360,12 @@ class _MapScreenState extends State<MapScreen> {
                   label: '취소',
                   icon: Icons.close,
                   color: Colors.grey.shade700,
-                  onPressed: _sending ? null : () => setState(() => _marker = null),
+                  onPressed: _sending
+                      ? null
+                      : () => setState(() {
+                            _marker = null;
+                            _markerSlot = null;
+                          }),
                 ),
               ),
               const SizedBox(width: 8),
@@ -347,18 +397,157 @@ class _MapScreenState extends State<MapScreen> {
     if (!mounted) return;
     setState(() {
       _sending = false;
-      if (r.ok) _marker = null; // 성공하면 출동 모드 종료, 실패하면 마커 유지
+      if (r.ok) {
+        _marker = null; // 성공하면 출동 모드 종료, 실패하면 마커 유지
+        _markerSlot = null;
+      }
     });
     _showResult('출동', r);
   }
 
+  /// 사진 슬롯을 누름 → 슬롯 중심에 출동 목표 마커 (이후 흐름은 일반 출동과 같다)
+  void _dispatchToSlot(PhotoSlot slot) {
+    setState(() {
+      _marker = slot.center;
+      _markerSlot = slot;
+    });
+  }
+
+  // ---------------------------------------------------------------- 위치 추적 카메라 (11장)
+
+  Widget _visionPanel(AppConfig config, DroneState? st) {
+    final v = st?.vision;
+    final current = v?.mode;
+    // 바꿀 수 없는 이유 (null이면 바꿀 수 있음)
+    final String? blocked;
+    if (!_c.online) {
+      blocked = '서버에 연결되어 있지 않습니다';
+    } else if (st == null) {
+      blocked = '드론 상태를 기다리는 중';
+    } else if (!st.canSwitchVision) {
+      blocked = '${modeKo(st.mode)}에는 바꿀 수 없습니다 — 정지(호버링)나 착지 후 바꾸세요';
+    } else if (_switchingMode) {
+      blocked = '전환 명령 보내는 중…';
+    } else {
+      blocked = null;
+    }
+
+    final String statusText;
+    final Color statusColor;
+    if (v == null) {
+      statusText = '카메라 상태 모름';
+      statusColor = Colors.black54;
+    } else if (!v.bridgeConnected) {
+      statusText = '위치 인식 프로그램 연결 안 됨';
+      statusColor = Colors.red.shade700;
+    } else if (v.switching) {
+      statusText = '전환 중… (지금 ${visionModeShort(v.bridgeMode)})';
+      statusColor = Colors.orange.shade900;
+    } else if (v.cameraOk == false) {
+      statusText = '카메라 이상';
+      statusColor = Colors.red.shade700;
+    } else if (v.cameraOk == null) {
+      statusText = '카메라 상태 확인 중';
+      statusColor = Colors.orange.shade900;
+    } else {
+      statusText = '카메라 정상${v.videoLive ? ' · 영상 수신 중' : ' · 영상 없음'}';
+      statusColor = v.videoLive ? Colors.green.shade800 : Colors.orange.shade900;
+    }
+
+    return Container(
+      key: const Key('vision-panel'),
+      width: double.infinity,
+      color: Colors.blueGrey.shade50,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('위치 카메라 ', style: TextStyle(color: Colors.black54)),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final m in config.visionModes)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            key: Key('vision-mode-$m'),
+                            label: Text(visionModeKo(m)),
+                            selected: m == current,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (blocked != null || m == current)
+                                ? null
+                                : (_) => _setVisionMode(m),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Text(statusText,
+              key: const Key('vision-status'),
+              style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
+          if (blocked != null && _c.online && st != null)
+            Text(blocked,
+                key: const Key('vision-blocked'),
+                style: const TextStyle(color: Colors.black54, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setVisionMode(String mode) async {
+    setState(() => _switchingMode = true);
+    final r = await _c.setVisionMode(mode);
+    if (!mounted) return;
+    setState(() => _switchingMode = false);
+    final name = '카메라 전환(${visionModeKo(mode)})';
+    if (!r.ok && r.error == 'BUSY') {
+      _snack('$name 실패: 비행 중이거나 다른 앱이 명령권을 가지고 있어 바꿀 수 없습니다. '
+          '정지(호버링)·착지 후 다시 시도하세요', Colors.red.shade800);
+    } else {
+      _showResult(name, r);
+    }
+  }
+
+  // ---------------------------------------------------------------- 다른 화면
+
+  void _openVideo() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => VideoScreen(client: _c, videoConnector: widget.videoConnector),
+    ));
+  }
+
+  void _openIncidents() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => IncidentListScreen(client: _c),
+    ));
+  }
+
   // ---------------------------------------------------------------- 제어 버튼
 
-  Widget _controlButtons() {
+  Widget _controlButtons(AppConfig config, DroneState? st) {
+    // 이륙: 착지 상태에서만 누를 수 있다. 출동과 같은 사전 검사(서버·드론 연결, 배터리)를 하고, 서버도 다시 검사한다.
+    final landed = st != null && !st.flying && st.mode == 'idle';
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
+          Expanded(
+            child: _bigButton(
+              key: const Key('btn-takeoff'),
+              label: '이륙',
+              icon: Icons.flight_takeoff,
+              color: Colors.green.shade700,
+              onPressed: landed ? () => _takeoff(config, st) : null,
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: _bigButton(
               key: const Key('btn-stop'),
@@ -391,6 +580,20 @@ class _MapScreenState extends State<MapScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _takeoff(AppConfig config, DroneState st) async {
+    final notReady = checkDispatchReady(
+      config: config,
+      serverOnline: _c.online,
+      droneConnected: st.connected,
+      batteryPct: st.batteryPct,
+    );
+    if (notReady != null) {
+      _snack('이륙할 수 없습니다: $notReady', Colors.red.shade700);
+      return;
+    }
+    await _run('이륙', _c.takeoff);
   }
 
   Future<void> _run(String name, Future<CmdResult> Function() send) async {
