@@ -212,5 +212,33 @@ void main() {
       expect(link.cmds.last['cmd'], 'car_clear_estop');
       await finish(tester);
     });
+    testWidgets('드론 따라가기: 호버링 중 누르면 follow_start, 따라가는 중엔 멈춤 = stop', (tester) async {
+      await start(tester); // 드론 호버링 중 (stateMsg 기본)
+      await tester.tap(find.byKey(const Key('btn-car-mode')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('btn-follow-start')));
+      await tester.pump();
+      expect(link.cmds.last['cmd'], 'follow_start');
+      link.push({...stateMsg(mode: 'following'), 'car': carState()});
+      await tester.pump();
+      expect(find.byKey(const Key('btn-follow-start')), findsNothing);
+      expect(find.text('차 따라가는 중'), findsWidgets);
+      await tester.tap(find.byKey(const Key('btn-follow-stop')));
+      await tester.pump();
+      expect(link.cmds.last['cmd'], 'stop');
+      await finish(tester);
+    });
+
+    testWidgets('드론이 착지 상태면 따라가기 버튼이 꺼져 있다', (tester) async {
+      await start(tester);
+      link.push({...stateMsg(mode: 'idle'), 'car': carState()});
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('btn-car-mode')));
+      await tester.pump();
+      final btn = tester.widget<FilledButton>(find.byKey(const Key('btn-follow-start')));
+      expect(btn.onPressed, isNull);
+      expect(find.textContaining('이륙시켜'), findsOneWidget);
+      await finish(tester);
+    });
   });
 }

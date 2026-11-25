@@ -47,12 +47,13 @@ class HttpSender:
         self.url, self.dry, self.timeout, self.print = server_url, dry_run, timeout, printer
         self._pose = None
         self._ugv = None   # (v0.8) 드론이 인식한 UGV 지도 위치 — 위치처럼 최신 값 하나만
+        self._ugv_rel = None   # (v0.8) 드론 기준 UGV 상대 위치 (따라가기) — 최신 값 하나만
         self._incidents: queue.Queue = queue.Queue(maxsize=20)
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self.warn = RateLimitedWarn()
         self.stats = {"pose_sent": 0, "pose_ok": 0, "pose_err": 0, "incident_sent": 0, "incident_ok": 0,
-                      "ugv_sent": 0, "ugv_ok": 0}
+                      "ugv_sent": 0, "ugv_ok": 0, "ugv_rel_sent": 0, "ugv_rel_ok": 0}
         self.last_pose_reply = None
         self.last_incident_reply = None
         self._session = None
@@ -81,6 +82,11 @@ class HttpSender:
             self._ugv = payload
             self._cond.notify_all()
 
+    def send_ugv_rel(self, payload: dict):
+        with self._cond:
+            self._ugv_rel = payload
+            self._cond.notify_all()
+
     def send_incident(self, payload: dict):
         try:
             self._incidents.put_nowait(payload)
@@ -93,11 +99,15 @@ class HttpSender:
         while not self._stop.is_set():
             with self._cond:
                 self._cond.wait_for(lambda: self._stop.is_set() or self._pose is not None
-                                    or self._ugv is not None or not self._incidents.empty(), 0.5)
+                                    or self._ugv is not None or self._ugv_rel is not None
+                                    or not self._incidents.empty(), 0.5)
                 pose, self._pose = self._pose, None
                 ugv, self._ugv = self._ugv, None
+                ugv_rel, self._ugv_rel = self._ugv_rel, None
             if pose is not None:
                 self._post("/vision/pose", pose, "pose")
+            if ugv_rel is not None:   # 따라가기는 지연이 짧을수록 좋아 먼저 보낸다
+                self._post("/vision/ugv_rel", ugv_rel, "ugv_rel")
             if ugv is not None:
                 self._post("/vision/ugv", ugv, "ugv")
             while not self._incidents.empty():
@@ -112,7 +122,7 @@ class HttpSender:
         if self.dry:
             if kind in ("incident", "ugv"):
                 self.print(f"[dry-run] POST {path} {short(payload)}")
-            else:
+            elif kind == "pose":
                 self.last_pose_reply = {"dry_run": True}
             return
         try:
@@ -129,7 +139,7 @@ class HttpSender:
             return
         if kind == "pose":
             self.last_pose_reply = body
-        else:
+        elif kind != "ugv_rel":
             self.last_incident_reply = body
         if r.status_code == 404:
             self.warn(f"404{path}", "서버에 %s 통로가 아직 없습니다 (HTTP 404) — 서버 업데이트 필요", path)

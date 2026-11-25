@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..models import Pose, Telemetry
+from ..models import BackendError, Pose, Telemetry
 
 
 class DroneBackend(ABC):
@@ -54,6 +54,13 @@ class DroneBackend(ABC):
     async def move_to(self, x_cm: float, y_cm: float, z_cm: float) -> int | None:
         """지도 좌표로 이동. 안전 검사는 컨트롤러가 이미 끝낸 상태로 호출된다.
         반환: 보낸 이동 구간 수(0 = 이미 목표 근처라 움직이지 않음), 모르면 None."""
+
+    async def set_velocity(self, fwd_cm_s: float, right_cm_s: float, up_cm_s: float = 0.0,
+                           yaw_deg_s: float = 0.0) -> None:
+        """속도 명령 (드론 기준: 앞 +, 오른쪽 +, 위 +, 시계 회전 +). 응답을 기다리지 않고 바로 돌아온다.
+        UGV 따라가기처럼 0.1초마다 계속 보내는 용도. 멈출 때는 반드시 0을 보낸다.
+        이 속도로 움직인 만큼 추정 위치도 옮긴다."""
+        raise BackendError(f"{self.name} 백엔드는 속도 명령을 지원하지 않습니다")
 
     @abstractmethod
     async def hover(self) -> None:

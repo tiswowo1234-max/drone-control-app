@@ -142,6 +142,7 @@ class Bridge:
         self.ugv_was_seen = False
         self.ugv_seen_at = -1e9
         self.last_ugv_post = -1e9
+        self.last_ugv_rel_post = -1e9
         self.last_ugv_log = -1e9
         self.counts["ugv"] = 0
 
@@ -428,6 +429,11 @@ class Bridge:
             self.sender.send_ugv({"x_m": round(u.map_x_m, 4), "y_m": round(u.map_y_m, 4),
                                   "yaw_deg": round(u.map_yaw_deg, 1), "ts": round(f.ts, 3), "mode": self.mode,
                                   "forward_m": round(u.forward_m, 4), "right_m": round(u.right_m, 4)})
+        # (v0.8) 따라가기용 드론 기준 상대 위치: 드론 지도 위치를 몰라도 보낸다 (docs/api.md 13.5)
+        if u.seen and u.forward_m is not None and f.mono - self.last_ugv_rel_post >= 1.0 / self.s.pose_send_hz:
+            self.last_ugv_rel_post = f.mono
+            self.sender.send_ugv_rel({"forward_m": round(u.forward_m, 4), "right_m": round(u.right_m, 4),
+                                      "rel_yaw_deg": round(u.rel_yaw_deg, 1), "ts": round(f.ts, 3), "mode": self.mode})
         if u.seen and not self.ugv_was_seen:
             self.ugv_was_seen = True
             log.info("[UGV] 찾음 — %s", u.line())

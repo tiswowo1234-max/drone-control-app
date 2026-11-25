@@ -156,6 +156,8 @@ class TelloCfg:
     face_min_dist_cm: float = 30.0      # 남은 수평 거리가 이보다 짧으면 돌지 않는다
     face_min_deg: float = 10.0          # 목표 방향과 기수 차이가 이보다 작으면 돌지 않는다
     face_settle_s: float = 0.5          # 회전 뒤 센서·카메라가 안정될 때까지 기다리는 시간
+    # 속도 명령 rc (UGV 따라가기, 2026-11-25): rc 값(-100~100) = cm/s x rc_per_cm_s. 실물에서 맞춰야 한다
+    rc_per_cm_s: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -169,6 +171,22 @@ class AlignCfg:
     min_confidence: float = 0.6   # 이보다 신뢰도가 낮은 카메라 위치(추적 예측값 등)는 세지 않는다
     require_heading: bool = True  # real: 방향 보정값(heading_from_vision)이 정해져야 완료
     timeout_s: float = 10.0       # 태그 위에서 이 시간 안에 완료하지 못하면 실패로 알리고 계속한다
+
+
+@dataclass(frozen=True)
+class FollowCfg:
+    """UGV 따라가기 (2026-11-25~): 드론 하단 카메라가 본 차 태그의 '드론 기준 상대 위치'로 rc 속도를 정한다."""
+    enabled: bool = True
+    distance_cm: float = 12.0      # 차 뒤 이 거리에 뜬다 ([ugv] follow_distance_cm에서 읽음)
+    period_s: float = 0.1          # 속도 명령 간격
+    gain_per_s: float = 0.8        # 속도(cm/s) = 거리 오차(cm) x 이 값
+    max_speed_cm_s: float = 15.0   # 수평 속도 상한
+    deadband_cm: float = 3.0       # 오차가 이보다 작으면 그 축은 0 (작은 흔들림 무시)
+    start_max_age_s: float = 1.0   # 시작할 때 차를 이 시간 안에 봤어야 한다
+    lost_s: float = 0.5            # 이 시간 못 보면 '놓침' → 마지막 속도 x coast_scale로 천천히
+    coast_s: float = 2.0           # 이 시간까지 못 찾으면 호버링하고 따라가기를 끝낸다 (UGV_LOST)
+    coast_scale: float = 0.5
+    edge_lookahead_s: float = 0.5  # 지금 속도로 이 시간 뒤 위치가 지도 경계·반경 밖이면 속도 0
 
 
 @dataclass(frozen=True)
@@ -248,6 +266,7 @@ class Settings:
     align: AlignCfg = field(default_factory=AlignCfg)
     photo_slots: list[PhotoSlot] = field(default_factory=list)
     car: CarCfg = field(default_factory=CarCfg)
+    follow: FollowCfg = field(default_factory=FollowCfg)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -297,6 +316,15 @@ def _car(table: dict[str, Any] | None) -> CarCfg:
     return replace(c, mock_start_cm=(float(st[0]), float(st[1])))
 
 
+def _follow(raw: dict[str, Any]) -> FollowCfg:
+    """[follow] + 따라가기 거리는 vision과 함께 쓰는 [ugv] follow_distance_cm에서 읽는다."""
+    table = dict(raw.get("follow") or {})
+    ugv = raw.get("ugv") or {}
+    if "follow_distance_cm" in ugv and "distance_cm" not in table:
+        table["distance_cm"] = float(ugv["follow_distance_cm"])
+    return _sub(FollowCfg, table)
+
+
 def load_settings(path: str | Path | None = None) -> Settings:
     path = Path(path) if path else DEFAULT_SETTINGS_PATH
     with open(path, "rb") as f:
@@ -340,6 +368,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         align=_sub(AlignCfg, raw.get("align")),
         photo_slots=_photo_slots(raw.get("photo_slots", [])),
         car=_car(raw.get("car")),
+        follow=_follow(raw),
         raw=raw,
     )
     validate(s)
@@ -386,5 +415,10 @@ def validate(s: Settings) -> None:
         errs.append("[car] 속도 값이 이상합니다 (0 < route_speed_mm_s <= max_speed_mm_s <= 200, max_omega_rad_s <= 3)")
     if c.max_points < 2 or c.chunk_bytes < 1 or c.drive_timeout_s <= 0:
         errs.append("[car] max_points >= 2, chunk_bytes >= 1, drive_timeout_s > 0 이어야 합니다")
+    f = s.follow
+    if not (f.period_s > 0 and f.gain_per_s > 0 and 0 < f.max_speed_cm_s <= 100 and f.distance_cm >= 0
+            and 0 < f.lost_s <= f.coast_s and 0 <= f.coast_scale <= 1 and f.edge_lookahead_s >= 0):
+        errs.append("[follow] 값이 이상합니다 (period_s·gain_per_s > 0, edge_lookahead_s >= 0, 0 < max_speed_cm_s <= 100, "
+                    "0 < lost_s <= coast_s, 0 <= coast_scale <= 1)")
     if errs:
         raise ValueError("settings.toml 오류: " + "; ".join(errs))

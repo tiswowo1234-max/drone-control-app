@@ -166,6 +166,8 @@ class _MapScreenState extends State<MapScreen> {
                     onClear: () => setState(() => _carDraft = const []),
                     onRouteSent: () => setState(() => _carDraft = const []),
                     onResult: _showResult,
+                    droneFlying: st?.flying ?? false,
+                    droneMode: st?.mode ?? 'idle',
                   )
                 else ...[
                   if (config.visionModes.isNotEmpty) _visionPanel(config, st),

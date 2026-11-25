@@ -9,6 +9,7 @@
   GET  /incidents/{id}/photo.jpg   사건 사진 (10.1장)
   GET  /sim/truth          mock/sim 참값 위치 (12장, 합성 카메라용. 가짜 차가 있으면 ugv도)
   POST /vision/ugv         vision/ → 드론이 인식한 UGV(차) 지도 위치 (13장)
+  POST /vision/ugv_rel     vision/ → 드론 기준 UGV 상대 위치 (13.5, 따라가기용)
 """
 from __future__ import annotations
 
@@ -316,6 +317,27 @@ def create_app(settings: Settings, backend: DroneBackend, car_link: CarLink | No
         if not (-m <= vals["x_m"] <= w_m + m and -m <= vals["y_m"] <= h_m + m):
             return vision_error("OUT_OF_BOUNDS", f"지도({w_m:g}m x {h_m:g}m, 여유 {m:g}m) 밖 좌표입니다")
         car.on_vision(vals["x_m"] * 100.0, vals["y_m"] * 100.0, vals["yaw_deg"])
+        return {"ok": True}
+
+    @app.post("/vision/ugv_rel")
+    async def vision_ugv_rel(request: Request):
+        """vision/ → 드론 하단 카메라가 본 UGV 태그의 드론 기준 위치 (docs/api.md 13.5, 따라가기). m 단위.
+        드론 지도 위치를 몰라도 보낸다 → 바닥 지도 태그가 안 보여도 따라갈 수 있다."""
+        try:
+            body = await request.json()
+        except ValueError:
+            return vision_error("BAD_REQUEST", "JSON 형식이 아닙니다")
+        if not isinstance(body, dict):
+            return vision_error("BAD_REQUEST", "JSON 객체가 아닙니다")
+        vals = {}
+        for k in ("forward_m", "right_m", "rel_yaw_deg"):
+            v = body.get(k)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                return vision_error("BAD_REQUEST", f"{k}(숫자)가 필요합니다")
+            vals[k] = float(v)
+        if abs(vals["forward_m"]) > 3.0 or abs(vals["right_m"]) > 3.0:
+            return vision_error("OUT_OF_BOUNDS", "드론에서 3m 넘게 떨어진 값입니다")
+        ctrl.on_ugv_relative(vals["forward_m"] * 100.0, vals["right_m"] * 100.0, vals["rel_yaw_deg"])
         return {"ok": True}
 
     @app.websocket("/vision/video")

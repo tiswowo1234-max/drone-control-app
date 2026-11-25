@@ -500,6 +500,7 @@ String modeKo(String mode) => switch (mode) {
       'hovering' => '호버링',
       'moving' => '이동 중',
       'returning' => '귀환 중',
+      'following' => '차 따라가는 중',
       'landing' => '착륙 중',
       'emergency' => '비상 정지',
       _ => mode,

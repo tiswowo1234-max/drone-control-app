@@ -12,6 +12,7 @@ import 'protocol.dart';
 /// - 경로: 지도를 눌러 찍은 점([draft])을 보내면 서버가 차 좌표로 바꿔 바로 출발시킨다
 /// - 조이스틱: 누르고 있는 동안 0.12초마다 속도를 보내고, 손을 떼면 정지 (조원 PWA와 같은 조작)
 /// - 정지 · 비상정지 · 비상정지 해제
+/// - 드론 따라가기: 호버링 중인 드론이 차 뒤를 따라 난다 (멈춤 = 드론 정지)
 class CarPanel extends StatefulWidget {
   const CarPanel({
     super.key,
@@ -23,6 +24,8 @@ class CarPanel extends StatefulWidget {
     required this.onClear,
     required this.onRouteSent,
     required this.onResult,
+    this.droneFlying = false,
+    this.droneMode = 'idle',
   });
 
   final DroneClient client;
@@ -39,6 +42,10 @@ class CarPanel extends StatefulWidget {
 
   /// 명령 결과 알림 (이름, 결과)
   final void Function(String name, CmdResult r) onResult;
+
+  /// 드론 상태 (state.flying, state.mode) — 따라가기 버튼용
+  final bool droneFlying;
+  final String droneMode;
 
   @override
   State<CarPanel> createState() => _CarPanelState();
@@ -129,6 +136,8 @@ class _CarPanelState extends State<CarPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _statusLine(car, connected),
+          const SizedBox(height: 4),
+          _followRow(),
           const SizedBox(height: 4),
           Text(
             widget.draft.isEmpty
@@ -254,6 +263,47 @@ class _CarPanelState extends State<CarPanel> {
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  /// 드론 따라가기 (docs/api.md v0.8 13.5). 서버가 시작 조건(비행 중·차가 카메라에 보임)을 최종 확인한다.
+  Widget _followRow() {
+    final following = widget.droneMode == 'following';
+    final canStart = _c.online && widget.droneFlying && widget.droneMode == 'hovering';
+    final String hint = following
+        ? '드론이 차 뒤를 따라가는 중'
+        : !widget.droneFlying
+            ? '드론을 이륙시켜 차 위로 보낸 뒤 누르세요'
+            : canStart
+                ? '드론 카메라에 차가 보이면 따라갑니다'
+                : '드론이 호버링 중일 때 누를 수 있습니다';
+    return Row(
+      children: [
+        Expanded(
+          child: Text(hint,
+              key: const Key('follow-hint'),
+              style: TextStyle(
+                  fontSize: 12,
+                  color: following ? Colors.green.shade800 : Colors.black54,
+                  fontWeight: following ? FontWeight.bold : FontWeight.normal)),
+        ),
+        const SizedBox(width: 6),
+        following
+            ? FilledButton.icon(
+                key: const Key('btn-follow-stop'),
+                style: FilledButton.styleFrom(backgroundColor: Colors.amber.shade800),
+                onPressed: _c.online ? () => _run('따라가기 멈춤', _c.stop) : null,
+                icon: const Icon(Icons.pause),
+                label: const Text('따라가기 멈춤'),
+              )
+            : FilledButton.icon(
+                key: const Key('btn-follow-start'),
+                style: FilledButton.styleFrom(backgroundColor: Colors.indigo),
+                onPressed: canStart ? () => _run('드론 따라가기', _c.followStart) : null,
+                icon: const Icon(Icons.flight),
+                label: const Text('드론 따라가기'),
+              ),
       ],
     );
   }

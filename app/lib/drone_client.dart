@@ -301,6 +301,9 @@ class DroneClient extends ChangeNotifier {
         if (speedMmS != null) 'speed_mm_s': speedMmS,
       });
 
+  /// 드론이 차 뒤를 따라 날기 시작 (호버링 중, 드론 카메라에 차 태그가 보일 때). 멈춤은 [stop].
+  Future<CmdResult> followStart() => sendCommand('follow_start');
+
   /// 차 정지 (경로 주행·조이스틱 모두 멈춤)
   Future<CmdResult> carStop() => sendCommand('car_stop');
 

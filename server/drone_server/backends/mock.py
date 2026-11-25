@@ -36,6 +36,8 @@ class MockBackend(DroneBackend):
         self.flying = False
         self.connected = False
         self._last_drain = time.monotonic()
+        self._vel = (0.0, 0.0, 0.0, 0.0)   # set_velocity (앞, 오른쪽, 위 cm/s, 시계 °/s) — 드론 기준
+        self._vel_t = time.monotonic()
         if self.cfg.pos_source == "vision":
             self.vision = VisionProvider(_MockPoseProvider(self), settings.vision.stale_s)
 
@@ -69,6 +71,21 @@ class MockBackend(DroneBackend):
             p.y_cm += dy
             p.z_cm = max(0.0, p.z_cm + dz)
 
+    def _integrate_velocity(self) -> None:
+        """set_velocity로 받은 속도만큼 지난 시간 동안 움직인다 (time_scale 배속)."""
+        now = time.monotonic()
+        dt = (now - self._vel_t) * self.cfg.time_scale
+        self._vel_t = now
+        fwd, right, up, yaw_rate = self._vel
+        if not self.flying or dt <= 0 or (fwd, right, up, yaw_rate) == (0.0, 0.0, 0.0, 0.0):
+            return
+        r = math.radians(self.truth.yaw_deg)
+        dx = (fwd * math.sin(r) + right * math.cos(r)) * dt
+        dy = (fwd * math.cos(r) - right * math.sin(r)) * dt
+        self._shift(dx, dy, up * dt)
+        for p in (self.pose, self.truth):
+            p.yaw_deg = (p.yaw_deg + yaw_rate * dt) % 360.0
+
     def _require(self) -> None:
         if not self.connected:
             raise BackendError("드론과 연결되지 않았습니다")
@@ -79,6 +96,7 @@ class MockBackend(DroneBackend):
 
     def telemetry(self) -> Telemetry:
         self._drain()
+        self._integrate_velocity()
         return Telemetry(
             connected=self.connected,
             flying=self.flying,
@@ -112,16 +130,30 @@ class MockBackend(DroneBackend):
         self._require()
         if not self.flying:
             raise BackendError("비행 중이 아닙니다")
+        self._integrate_velocity()
+        self._vel = (0.0, 0.0, 0.0, 0.0)   # 속도 명령 중이었으면 멈추고 이동
         # 고도 변경만이면 수직 속도, 아니면 수평 속도로 (단순화)
         horizontal = math.hypot(x_cm - self.pose.x_cm, y_cm - self.pose.y_cm) > 1
         speed = self.cfg.speed_cm_s if horizontal else self.cfg.vertical_speed_cm_s
         await self._animate(x_cm, y_cm, z_cm, speed)
 
+    async def set_velocity(self, fwd_cm_s: float, right_cm_s: float, up_cm_s: float = 0.0,
+                           yaw_deg_s: float = 0.0) -> None:
+        self._require()
+        if not self.flying:
+            raise BackendError("비행 중이 아닙니다")
+        self._integrate_velocity()
+        self._vel = (float(fwd_cm_s), float(right_cm_s), float(up_cm_s), float(yaw_deg_s))
+
     async def hover(self) -> None:
         self._require()  # 이동은 컨트롤러가 작업을 cancel해서 이미 멈춘 상태
+        self._integrate_velocity()
+        self._vel = (0.0, 0.0, 0.0, 0.0)
 
     async def land(self) -> None:
         self._require()
+        self._integrate_velocity()
+        self._vel = (0.0, 0.0, 0.0, 0.0)
         if not self.flying:
             return
         await self._animate(self.pose.x_cm, self.pose.y_cm, 0.0, self.cfg.vertical_speed_cm_s)
@@ -129,6 +161,7 @@ class MockBackend(DroneBackend):
 
     async def emergency(self) -> None:
         self._require()
+        self._vel = (0.0, 0.0, 0.0, 0.0)
         self.flying = False
         self.pose.z_cm = self.truth.z_cm = 0.0  # 모터 정지 → 그대로 추락
 

@@ -7,20 +7,22 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
+from dataclasses import replace
 from typing import Any, Awaitable, Callable
 
 from .backends.base import DroneBackend
 from .safety import SafetyError, check_battery, check_target, clamp_alt
-from .settings import VISION_MODES, Settings
+from .settings import VISION_MODES, FollowCfg, Settings
 from .tags import load_tags, nearest_tag
 
 log = logging.getLogger("drone_server.controller")
 
-COMMANDS = ("takeoff", "goto", "stop", "land", "return_home", "emergency", "set_vision_mode")
-FLIGHT_MODES = ("taking_off", "hovering", "moving", "returning", "landing")
+COMMANDS = ("takeoff", "goto", "stop", "land", "return_home", "emergency", "set_vision_mode", "follow_start")
+FLIGHT_MODES = ("taking_off", "hovering", "moving", "returning", "landing", "following")
 
 EventSink = Callable[[dict], Awaitable[None]]
 
@@ -44,6 +46,24 @@ def _num(v: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
+def follow_velocity(fwd_cm: float, right_cm: float, rel_yaw_deg: float, f: FollowCfg) -> tuple[float, float]:
+    """UGV 따라가기 속도 (드론 기준 앞·오른쪽 cm/s).
+
+    fwd_cm, right_cm = 드론 하단 카메라가 본 차 태그의 드론 기준 위치, rel_yaw_deg = 차 앞쪽 - 드론 앞쪽 (시계 +).
+    목표 = 차 뒤 distance_cm 지점. 거기까지의 거리에 비례한 속도(gain_per_s), 상한 max_speed_cm_s,
+    deadband_cm 안이면 0 (작은 흔들림에 드론이 떨지 않게)."""
+    th = math.radians(rel_yaw_deg)
+    ef = fwd_cm - f.distance_cm * math.cos(th)     # 차 앞쪽 = 드론 기준 (cos θ, sin θ)
+    er = right_cm - f.distance_cm * math.sin(th)
+    if math.hypot(ef, er) < f.deadband_cm:
+        return 0.0, 0.0
+    vf, vr = ef * f.gain_per_s, er * f.gain_per_s
+    n = math.hypot(vf, vr)
+    if n > f.max_speed_cm_s:
+        vf, vr = vf * f.max_speed_cm_s / n, vr * f.max_speed_cm_s / n
+    return vf, vr
+
+
 class Controller:
     def __init__(self, settings: Settings, backend: DroneBackend, emit: EventSink | None = None,
                  vision_link: Any = None):
@@ -61,6 +81,9 @@ class Controller:
         # 초기 정렬 (2026-11-25): 연결 후 첫 이륙 때 가장 가까운 태그 위에서 위치·방향을 확정한다
         self.aligned = False
         self._tags = load_tags(settings) if settings.align.enabled else []
+        # UGV 따라가기: vision이 보낸 '드론 기준 차 위치' 최신 값 (POST /vision/ugv_rel)
+        self.ugv_rel: tuple[float, float, float] | None = None   # (앞 cm, 오른쪽 cm, 차 방향 - 드론 방향 °)
+        self.ugv_rel_at: float | None = None
 
     # ------------------------------------------------------------------ 출력
     async def event(self, level: str, code: str, message: str) -> None:
@@ -95,6 +118,13 @@ class Controller:
         if self.s.limits.fixed_alt or not (t.flying and t.pos):
             return self.s.limits.default_alt_cm
         return clamp_alt(self.s, t.pos.z_cm)
+
+    def on_ugv_relative(self, fwd_cm: float, right_cm: float, rel_yaw_deg: float) -> None:
+        """드론 하단 카메라가 차 태그를 봄 (드론 기준 상대 위치)."""
+        self.ugv_rel, self.ugv_rel_at = (fwd_cm, right_cm, rel_yaw_deg), time.monotonic()
+
+    def ugv_rel_age(self) -> float | None:
+        return None if self.ugv_rel_at is None else time.monotonic() - self.ugv_rel_at
 
     def note_alive(self) -> None:
         """제어 앱의 ping(또는 명령)을 받았을 때 호출."""
@@ -214,6 +244,79 @@ class Controller:
         finally:
             self.target = prev_target
 
+    def _edge_guard(self, vf: float, vr: float) -> tuple[float, float, bool]:
+        """지금 속도로 edge_lookahead_s 뒤 위치가 지도 경계·반경·금지 구역 밖이면 속도 0. (속도, 막았는지)
+        이미 밖에 있으면 이륙 지점 쪽으로 가까워지는 움직임만 허용한다."""
+        if vf == 0.0 and vr == 0.0:
+            return vf, vr, False
+        p = self.b.telemetry().pos
+        if p is None:
+            return vf, vr, False
+        la = self.s.follow.edge_lookahead_s
+        r = math.radians(p.yaw_deg)
+        nx = p.x_cm + (vf * math.sin(r) + vr * math.cos(r)) * la
+        ny = p.y_cm + (vf * math.cos(r) - vr * math.sin(r)) * la
+        z = self.s.limits.default_alt_cm
+        try:
+            check_target(self.s, nx, ny, z, (p.x_cm, p.y_cm))
+            return vf, vr, False
+        except SafetyError:
+            pass
+        try:
+            check_target(self.s, p.x_cm, p.y_cm, z)
+        except SafetyError:   # 이미 밖: 안쪽(이륙 지점 쪽)으로 가는 것만
+            hx, hy = self.s.home_x_cm, self.s.home_y_cm
+            if math.hypot(nx - hx, ny - hy) < math.hypot(p.x_cm - hx, p.y_cm - hy):
+                return vf, vr, False
+        return 0.0, 0.0, True
+
+    async def _m_follow(self) -> None:
+        """UGV 따라가기 (rc 속도 명령). stop·land·emergency·앱 끊김 착륙은 이 미션을 취소해 우선 처리된다.
+
+        차가 보이면(lost_s 안) 차 뒤 distance_cm 지점으로 간다. 잠깐 놓치면(coast_s까지) **마지막으로 본 차 위치 쪽으로**
+        천천히 간다 — 차는 보통 화면 가장자리로 빠져나가며 사라지므로 그쪽으로 가면 다시 보인다.
+        놓친 뒤 드론이 움직인 거리는 보낸 속도로 계산해 뺀다 (기수는 고정이라 드론 기준 좌표가 그대로 유지된다)."""
+        f = self.s.follow
+        self.mode, self.target = "following", None
+        edge_warned = False
+        seen_at = None                 # 마지막으로 쓴 관측 시각
+        moved = [0.0, 0.0]             # 그 관측 뒤 드론이 움직인 거리 (드론 기준 앞·오른쪽 cm)
+        vf = vr = 0.0
+        t_prev = time.monotonic()
+        await self.event("info", "FOLLOW_START", f"차 따라가기를 시작합니다 (차 뒤 {f.distance_cm:g}cm)")
+        try:
+            while True:
+                now = time.monotonic()
+                moved[0] += vf * (now - t_prev)
+                moved[1] += vr * (now - t_prev)
+                t_prev = now
+                age = self.ugv_rel_age()
+                if self.ugv_rel_at != seen_at:
+                    seen_at, moved = self.ugv_rel_at, [0.0, 0.0]
+                if age is not None and age <= f.lost_s and self.ugv_rel is not None:
+                    fwd, right, rel = self.ugv_rel
+                    vf, vr = follow_velocity(fwd - moved[0], right - moved[1], rel, f)
+                elif age is not None and age <= f.coast_s and self.ugv_rel is not None:
+                    # 잠깐 놓침: 마지막으로 본 차 위치(차 뒤가 아니라 차 자체) 쪽으로 천천히
+                    seek = replace(f, distance_cm=0.0, max_speed_cm_s=f.max_speed_cm_s * f.coast_scale)
+                    vf, vr = follow_velocity(self.ugv_rel[0] - moved[0], self.ugv_rel[1] - moved[1], 0.0, seek)
+                else:
+                    log.info("따라가기: 차를 %.1f초 동안 못 봐서 멈춥니다", age if age is not None else -1)
+                    await self.event("warn", "UGV_LOST",
+                                     f"차를 {f.coast_s:g}초 동안 못 봐서 따라가기를 멈추고 제자리에 떠 있습니다")
+                    vf = vr = 0.0
+                    break
+                vf, vr, blocked = self._edge_guard(vf, vr)
+                if blocked and not edge_warned:
+                    await self.event("warn", "FOLLOW_EDGE", "지도 경계·비행 반경에 닿아 그 방향으로는 따라가지 않습니다")
+                edge_warned = blocked
+                await self.b.set_velocity(vf, vr, 0.0, 0.0)
+                await asyncio.sleep(f.period_s)
+        finally:
+            with contextlib.suppress(Exception):   # 취소(stop·착륙)·실패 때도 반드시 멈춘다
+                await self.b.set_velocity(0.0, 0.0, 0.0, 0.0)
+        self.mode = "hovering"
+
     async def _m_hover(self) -> None:
         await self.b.hover()
         self.mode = "hovering"
@@ -318,6 +421,28 @@ class Controller:
         await self._cancel_mission()
         self.mode, self.target = "returning", (self.s.home_x_cm, self.s.home_y_cm)
         self._start(self._m_return_home(z))
+
+    async def _c_follow_start(self, msg: dict) -> None:
+        """UGV 따라가기 시작 (v0.8). 비행(호버링) 중이고, 드론이 차 태그를 막 봤을 때만. 멈춤은 stop."""
+        f = self.s.follow
+        if not f.enabled:
+            raise SafetyError("BAD_REQUEST", "따라가기 기능이 꺼져 있습니다 ([follow] enabled)")
+        t = self._require_connected()
+        self._require_not_landing(t)
+        if self.mode == "taking_off":
+            raise SafetyError("BUSY", "이륙 중입니다. 잠시 뒤 다시 보내 주세요")
+        if not t.flying:
+            raise SafetyError("NOT_FLYING", "먼저 이륙해서 드론을 차 위로 보내 주세요")
+        if self.mode == "following":
+            return   # 이미 따라가는 중
+        age = self.ugv_rel_age()
+        if age is None or age > f.start_max_age_s:
+            raise SafetyError("UGV_NOT_SEEN", "드론 카메라에 차가 보이지 않습니다. 드론을 차 위로 보낸 뒤 다시 누르세요")
+        check_battery(self.s, t.battery_pct)
+        self.note_alive()
+        await self._cancel_mission()
+        self.mode, self.target = "following", None
+        self._start(self._m_follow())
 
     async def _c_emergency(self, msg: dict) -> None:
         if msg.get("confirm") is not True:
