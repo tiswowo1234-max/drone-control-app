@@ -31,6 +31,7 @@ class Frame:
     ts: float          # 유닉스 초 (찍은/받은 시각)
     mono: float        # time.monotonic() 기준 같은 시각
     truth: tuple | None = None  # 합성 카메라: (x, y, z, yaw) 참값 (시험·출력용)
+    ugv_truth: tuple | None = None  # 합성 카메라 UGV: (x, y, yaw) 참값
 
 
 class LatestFrame:
@@ -39,9 +40,9 @@ class LatestFrame:
         self._frame: Frame | None = None
         self._next_id = 1
 
-    def publish(self, image: np.ndarray, ts: float | None = None, truth=None) -> None:
+    def publish(self, image: np.ndarray, ts: float | None = None, truth=None, ugv_truth=None) -> None:
         with self._cond:
-            self._frame = Frame(self._next_id, image, ts if ts is not None else time.time(), time.monotonic(), truth)
+            self._frame = Frame(self._next_id, image, ts if ts is not None else time.time(), time.monotonic(), truth, ugv_truth)
             self._next_id += 1
             self._cond.notify_all()
 
@@ -114,6 +115,11 @@ class ServerTruth:
         self.url = server_url + "/sim/truth"
         self.timeout = timeout
         self.error = ""
+        self.ugv = None   # (v0.8) 가짜 차가 있으면 그 실제 위치 (x_m, y_m, yaw_deg)
+
+    def ugv_truth(self, t: float):
+        """합성 카메라용 UGV 참값 — 마지막 /sim/truth 응답의 ugv (없으면 None → 그리지 않음)."""
+        return self.ugv
 
     def __call__(self, t: float):
         try:
@@ -126,6 +132,8 @@ class ServerTruth:
             self.error = f"/sim/truth 거부: {d.get('error')} {d.get('message', '')}".strip()
             return None
         self.error = ""
+        u = d.get("ugv")
+        self.ugv = (float(u["x_m"]), float(u["y_m"]), float(u["yaw_deg"])) if isinstance(u, dict) else None
         return (float(d["x_m"]), float(d["y_m"]), float(d.get("z_m") or 0.0), float(d.get("yaw_deg") or 0.0))
 
 
@@ -165,10 +173,11 @@ class LocalTour:
 class SyntheticSource(Source):
     kind = "synthetic"
 
-    def __init__(self, camera, truth, fps: float, label: str, mount_yaw_deg: float = 0.0):
+    def __init__(self, camera, truth, fps: float, label: str, mount_yaw_deg: float = 0.0, ugv=None, ugv_cfg=None):
         super().__init__()
         self.camera, self.truth, self.fps, self.label = camera, truth, fps, label
         self.mount_yaw_deg = mount_yaw_deg  # 실물과 같은 장착 각도로 그린다 (카메라 위쪽 = 드론 앞쪽 - 이 값)
+        self.ugv, self.ugv_cfg = ugv, ugv_cfg  # UGV 참값 (t → x, y, yaw) — 있으면 화면에 UGV 윗면 태그를 그린다
 
     def _run(self):
         period = 1.0 / self.fps
@@ -181,8 +190,17 @@ class SyntheticSource(Source):
                 x, y, z, yaw = pose
                 if z <= 0.02:  # 바닥(착지): 카메라가 바닥에 붙어 있으면 아무것도 안 보인다 — 그래도 그린다(실제와 같게)
                     z = 0.02
-                img = self.camera.render(x, y, z, (yaw - self.mount_yaw_deg) % 360)
-                self.frames.publish(img, time.time(), truth=(x, y, z, yaw))
+                cam_yaw = (yaw - self.mount_yaw_deg) % 360
+                img = self.camera.render(x, y, z, cam_yaw)
+                ugv_truth = None
+                ut = self.ugv(time.monotonic()) if self.ugv is not None else None
+                if ut is not None:
+                    from .ugv import render_ugv
+                    ux, uy, uyaw = ut
+                    ugv_truth = (ux, uy, uyaw)
+                    view = self.camera.view(x, y, z, cam_yaw)
+                    img = render_ugv(img, view.K, view.R, view.t, (ux, uy), uyaw, self.ugv_cfg)
+                self.frames.publish(img, time.time(), truth=(x, y, z, yaw), ugv_truth=ugv_truth)
                 self._set(True, f"합성 카메라 {self.label} ({self.camera.width}x{self.camera.height} "
                                 f"{'컬러' if self.camera.color else '흑백'})")
             nxt += period

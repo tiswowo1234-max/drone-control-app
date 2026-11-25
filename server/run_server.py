@@ -5,6 +5,7 @@
     python run_server.py sim        # Unity 시뮬레이터 (UnityProject.exe를 먼저 켜기)
     python run_server.py real       # 실제 RoboMaster TT
     python run_server.py mock --vision   # 위치를 POST /vision/pose 값으로 표시 (tools/fake_vision.py로 시험)
+    python run_server.py real --car off  # 차(UGV) 기능 끔. --car mock = 가짜 차, --car ble = 실제 차 (기본 [car] mode)
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from drone_server.app import create_app  # noqa: E402
 from drone_server.backends import create_backend  # noqa: E402
+from drone_server.car import make_car_link  # noqa: E402
 from drone_server.serve import install_log_filters, make_server, run_until_stopped  # noqa: E402
 from drone_server.settings import DEFAULT_SETTINGS_PATH, load_settings, validate  # noqa: E402
 
@@ -73,6 +75,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, help="기본: settings.toml [server] port")
     ap.add_argument("--vision", action="store_true",
                     help="카메라 위치 추정 입력(POST /vision/pose)을 켠다 = 선택한 백엔드의 pos_source를 vision으로")
+    ap.add_argument("--car", choices=["ble", "mock", "off"],
+                    help="차(UGV) 연결: ble = 실제 차(블루투스), mock = 가짜 차, off = 끔 (기본 [car] mode)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -84,11 +88,14 @@ def main() -> int:
     if args.vision:
         settings = replace(settings, **{kind: replace(getattr(settings, kind), pos_source="vision")})
         validate(settings)
+    if args.car:
+        settings = replace(settings, car=replace(settings.car, mode=args.car))
     host = args.host or settings.server.host
     port = args.port or settings.server.port
 
     backend = create_backend(kind, settings)
-    app = create_app(settings, backend)
+    car_link = make_car_link(settings, settings.mock.time_scale if settings.car.mode == "mock" else 1.0)
+    app = create_app(settings, backend, car_link)
 
     print("=" * 60)
     print(f" 드론 중계 서버  backend={kind}")
@@ -103,6 +110,11 @@ def main() -> int:
         print(f" 위치 입력(vision) 켜짐: POST http://<이 PC IP>:{port}/vision/pose  (tools/fake_vision.py로 시험)")
     print(f" 위치 추적 카메라 모드(처음): {settings.bridge.default_mode}  (앱에서 esp32 / tt_down 전환)")
     print(f" vision/ 연결 프로그램: ws://<이 PC IP>:{port}/vision/video, POST /vision/incident")
+    car_text = {"ble": f"실제 차 (블루투스 '{settings.car.ble_address or settings.car.ble_name}' 자동 연결)",
+                "mock": "가짜 차(mock)", "off": "끔"}[settings.car.mode]
+    print(f" 차(UGV): {car_text}  — 위치 입력 POST /vision/ugv")
+    if settings.car.mode == "ble":
+        print("   ※ 폰의 police-car-controller(PWA)가 차에 연결돼 있으면 서버가 연결할 수 없습니다 (BLE는 한 곳만)")
     print(" 끄려면 이 창에서 Ctrl+C")
     print("=" * 60)
     return run_until_stopped(make_server(app, host, port))

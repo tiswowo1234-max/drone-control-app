@@ -24,6 +24,9 @@ class MapView extends StatefulWidget {
     this.incidents = const [],
     this.isIncidentAcked,
     this.onIncidentTap,
+    this.car,
+    this.carDraft = const [],
+    this.onMapTap,
   });
 
   final AppConfig config;
@@ -50,6 +53,15 @@ class MapView extends StatefulWidget {
   /// 확인한 사건이면 true (회색으로 그린다)
   final bool Function(Incident)? isIncidentAcked;
   final ValueChanged<Incident>? onIncidentTap;
+
+  /// 차(UGV) 상태 (v0.8). 위치를 알면 차 아이콘과 주행 중인 경로를 그린다.
+  final CarStatus? car;
+
+  /// 차 조종 모드에서 찍은 경로점 (cm). 차 위치부터 주황 선으로 잇는다.
+  final List<Offset> carDraft;
+
+  /// 지도를 누른 곳 (cm). 있으면 마커·슬롯보다 먼저 처리한다 (차 조종 모드).
+  final ValueChanged<Offset>? onMapTap;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -102,7 +114,9 @@ class _MapViewState extends State<MapView> {
                 child: GestureDetector(
                   // 출동 중이면 지도를 누른 곳으로 마커를 옮긴다
                   // 슬롯 사각형 안을 누르면 슬롯 출동
-                  onTapUp: (widget.onMarkerMoved == null && widget.onSlotTap == null)
+                  onTapUp: (widget.onMarkerMoved == null &&
+                          widget.onSlotTap == null &&
+                          widget.onMapTap == null)
                       ? null
                       : (d) => _onTap(coords.pxToCm(d.localPosition)),
                   child: Stack(
@@ -126,6 +140,19 @@ class _MapViewState extends State<MapView> {
                         ),
                       ),
                       Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _CarRoutePainter(
+                              coords,
+                              active: widget.car?.routePoints ?? const [],
+                              activeWp: widget.car?.routeWp,
+                              draftFrom: widget.car?.pos?.xy,
+                              draft: widget.carDraft,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
                         child: AnimatedBuilder(
                           animation: _tc,
                           builder: (context, _) => _overlay(coords),
@@ -143,6 +170,10 @@ class _MapViewState extends State<MapView> {
   }
 
   void _onTap(Offset cm) {
+    if (widget.onMapTap != null) {
+      widget.onMapTap!(cm);
+      return;
+    }
     if (widget.onSlotTap != null) {
       for (final slot in widget.config.photoSlots) {
         if (pointInPolygon(cm, slot.corners)) {
@@ -191,6 +222,16 @@ class _MapViewState extends State<MapView> {
               child: const Tooltip(
                   message: '현재 이동 목표',
                   child: Icon(Icons.flag, color: Colors.orange, size: 28))),
+        for (final (i, p) in widget.carDraft.indexed)
+          _icon(coords.cmToPx(p), s, 22,
+              child: _RoutePointLabel(key: Key('car-draft-$i'), text: 'P${i + 1}')),
+        if (widget.car?.pos != null)
+          _icon(coords.cmToPx(widget.car!.pos!.xy), s, 34,
+              child: _CarIcon(
+                yawDeg: widget.car!.pos!.yawDeg,
+                seen: widget.car!.posSource == 'vision',
+                active: widget.droneFresh && widget.car!.connected,
+              )),
         if (pos != null)
           _icon(coords.cmToPx(pos.xy), s, 40,
               child: _DroneIcon(
@@ -270,6 +311,109 @@ class _DroneIcon extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 차(UGV) 아이콘: 둥근 사각형(드론은 원) + 진행 방향 화살표.
+/// 드론이 지금 보고 있으면 진한 파랑, 엔코더로 이어 가는 중이면 회청색 점선 테두리 느낌(옅게).
+class _CarIcon extends StatelessWidget {
+  const _CarIcon({required this.yawDeg, required this.seen, required this.active});
+
+  final double yawDeg;
+  final bool seen;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = !active
+        ? Colors.grey
+        : seen
+            ? Colors.blue.shade800
+            : Colors.blueGrey.shade400;
+    return Tooltip(
+      message: '차 (${seen ? '드론 인식' : '엔코더로 이어감'}, ${yawDeg.toStringAsFixed(0)}°)',
+      child: DecoratedBox(
+        key: const Key('car-icon'),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color: color.withValues(alpha: seen ? 0.9 : 0.6),
+          border: Border.all(color: seen ? Colors.white : Colors.amber, width: 2),
+        ),
+        child: Transform.rotate(
+          angle: yawDeg * math.pi / 180,
+          child: const Icon(Icons.navigation, color: Colors.white, size: 22),
+        ),
+      ),
+    );
+  }
+}
+
+/// 차 경로점 번호 (P1, P2 …)
+class _RoutePointLabel extends StatelessWidget {
+  const _RoutePointLabel({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.orange.shade800,
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      child: Center(
+        child: Text(text,
+            style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+}
+
+/// 차 경로: 주행 중인 경로(초록, 지나온 구간은 회색) + 찍고 있는 경로(주황, 차 위치에서 시작)
+class _CarRoutePainter extends CustomPainter {
+  _CarRoutePainter(this.coords,
+      {required this.active, this.activeWp, this.draftFrom, required this.draft});
+
+  final MapCoords coords;
+  final List<Offset> active;
+  final int? activeWp;
+  final Offset? draftFrom;
+  final List<Offset> draft;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    Paint line(Color c, double w) => Paint()
+      ..color = c
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = w
+      ..strokeCap = StrokeCap.round;
+    if (active.length >= 2) {
+      final wp = (activeWp ?? 1).clamp(1, active.length);
+      for (var i = 1; i < active.length; i++) {
+        final done = i < wp; // P(i-1)→P(i) 구간을 이미 지남
+        canvas.drawLine(coords.cmToPx(active[i - 1]), coords.cmToPx(active[i]),
+            line(done ? Colors.grey.withValues(alpha: 0.6) : Colors.green.shade700, 3));
+      }
+      for (final p in active.skip(1)) {
+        canvas.drawCircle(coords.cmToPx(p), 4, Paint()..color = Colors.green.shade800);
+      }
+    }
+    if (draft.isNotEmpty) {
+      final pts = [?draftFrom, ...draft];
+      final paint = line(Colors.orange.shade800, 2.5);
+      for (var i = 1; i < pts.length; i++) {
+        canvas.drawLine(coords.cmToPx(pts[i - 1]), coords.cmToPx(pts[i]), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CarRoutePainter old) =>
+      old.coords.viewSize != coords.viewSize ||
+      old.active != active ||
+      old.activeWp != activeWp ||
+      old.draftFrom != draftFrom ||
+      old.draft != draft;
 }
 
 /// 사진 슬롯 번호 표시 (누르면 슬롯 출동)

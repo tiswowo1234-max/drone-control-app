@@ -19,6 +19,7 @@ class AppConfig {
     this.fromServer = false,
     this.visionModes = const [],
     this.photoSlots = const [],
+    this.car,
   });
 
   /// 바닥 지도의 실제 가로 길이 (cm)
@@ -48,6 +49,9 @@ class AppConfig {
   /// 사건 사진 슬롯 S1~S4 (docs/api.md v0.7 3.1·9장)
   final List<PhotoSlot> photoSlots;
 
+  /// 차(UGV) 제어 설정 (v0.8 13장). null이면 서버에 차 기능이 없음 → 차 버튼을 숨긴다.
+  final CarConfig? car;
+
   Offset get home => Offset(homeXCm, homeYCm);
 
   /// 서버 연결 전 기본값 (config/settings.toml과 동일하게 유지)
@@ -58,9 +62,9 @@ class AppConfig {
     homeYCm: 70.2,
     limits: Limits(
       maxRadiusCm: 250,
-      minAltCm: 50,
+      minAltCm: 30,
       maxAltCm: 150,
-      defaultAltCm: 80,
+      defaultAltCm: 50,
       minBatteryPct: 20,
       linkTimeoutS: 3,
     ),
@@ -135,6 +139,44 @@ class AppConfig {
         for (final p in (j['photo_slots'] is List ? j['photo_slots'] : []))
           if (p is Map) PhotoSlot.fromJson(p.cast<String, dynamic>()),
       ].whereType<PhotoSlot>().toList(),
+      car: CarConfig.fromJson(j['car']),
+    );
+  }
+}
+
+/// `config.car` (docs/api.md v0.8 13.1)
+class CarConfig {
+  const CarConfig({
+    this.link = 'ble',
+    this.maxSpeedMmS = 100,
+    this.maxOmegaRadS = 1.5,
+    this.routeSpeedMmS = 60,
+    this.maxPoints = 15,
+    this.mapMarginCm = 5,
+  });
+
+  /// `ble` = 실제 차 / `mock` = 가짜 차
+  final String link;
+  final double maxSpeedMmS;
+  final double maxOmegaRadS;
+  final double routeSpeedMmS;
+
+  /// 한 번에 보낼 수 있는 경로점 수 (출발 위치 제외)
+  final int maxPoints;
+
+  /// 경로점은 지도 가장자리에서 이만큼 안쪽 (cm)
+  final double mapMarginCm;
+
+  static CarConfig? fromJson(Object? v) {
+    if (v is! Map) return null;
+    const d = CarConfig();
+    return CarConfig(
+      link: v['link'] is String ? v['link'] as String : d.link,
+      maxSpeedMmS: _num(v['max_speed_mm_s']) ?? d.maxSpeedMmS,
+      maxOmegaRadS: _num(v['max_omega_rad_s']) ?? d.maxOmegaRadS,
+      routeSpeedMmS: _num(v['route_speed_mm_s']) ?? d.routeSpeedMmS,
+      maxPoints: v['max_points'] is num ? (v['max_points'] as num).toInt() : d.maxPoints,
+      mapMarginCm: _num(v['map_margin_cm']) ?? d.mapMarginCm,
     );
   }
 }

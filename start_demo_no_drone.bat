@@ -20,8 +20,8 @@ if not errorlevel 1 (
   exit /b 1
 )
 
-echo [1/3] 가짜 드론 서버를 새 창에서 켭니다 (mock --vision)...
-start "드론 서버 (mock)" cmd /k call "%~dp0server\run_server.bat" mock --vision
+echo [1/3] 가짜 드론 서버를 새 창에서 켭니다 (mock --vision --car mock: 가짜 차 포함)...
+start "드론 서버 (mock)" cmd /k call "%~dp0server\run_server.bat" mock --vision --car mock
 
 rem ---- 서버가 응답할 때까지 기다림 (처음 실행 땐 가상환경 설치로 몇 분 걸릴 수 있음) ----
 echo [2/3] 서버가 준비되기를 기다립니다...
@@ -44,6 +44,7 @@ echo [3/3] 위치 인식 연결 프로그램을 새 창에서 켭니다 (합성 
 start "위치 인식 연결" cmd /k call "%~dp0vision\run_bridge.bat"
 echo.
 echo  앱에서: 이륙 → 지도의 보라색 S4 누르기 → 확인 → 몇 초 뒤 사건 알림, 카메라 아이콘으로 영상 보기
+echo  차(UGV): 드론을 지도 (120, 70)cm 근처(정문 왼쪽)로 출동 → 드론이 가짜 차를 인식 → 위쪽 경찰 아이콘으로 차 조종
 
 echo.
 echo ============================================================

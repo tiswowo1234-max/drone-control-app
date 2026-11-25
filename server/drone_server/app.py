@@ -1,4 +1,4 @@
-"""FastAPI 서버 (docs/api.md v0.7).
+"""FastAPI 서버 (docs/api.md v0.8).
 
   ws   /ws                 앱 ⇄ 서버 (config, incidents, state, ack, event, incident / cmd, ping)
   GET  /                   상태 확인 (브라우저)
@@ -7,7 +7,9 @@
   ws   /vision/video       vision/ → JPEG 영상, bridge_status / 서버 → vision_mode (8·11장)
   ws   /ws/video           서버 → 앱 JPEG 영상, video_status (10.2장)
   GET  /incidents/{id}/photo.jpg   사건 사진 (10.1장)
-  GET  /sim/truth          mock/sim 참값 위치 (12장, 합성 카메라용)
+  GET  /sim/truth          mock/sim 참값 위치 (12장, 합성 카메라용. 가짜 차가 있으면 ugv도)
+  POST /vision/ugv         vision/ → 드론이 인식한 UGV(차) 지도 위치 (13장)
+  POST /vision/ugv_rel     vision/ → 드론 기준 UGV 상대 위치 (13.5, 따라가기용)
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from fastapi.responses import JSONResponse, Response
 
 from . import API_VERSION
 from .backends.base import DroneBackend
+from .car import CAR_COMMANDS, CarController, CarLink
 from .controller import Controller, make_ack, make_event
 from .incidents import IncidentError, IncidentStore
 from .settings import VISION_MODES, Settings
@@ -35,7 +38,7 @@ RECONNECT_PERIOD_S = 2.0
 SHUTDOWN_STEP_TIMEOUT_S = 1.0
 
 
-def make_config_message(s: Settings, backend_name: str) -> dict:
+def make_config_message(s: Settings, backend_name: str, car: CarController | None = None) -> dict:
     L = s.limits
     return {
         "type": "config",
@@ -55,6 +58,7 @@ def make_config_message(s: Settings, backend_name: str) -> dict:
         "backend": backend_name,
         "vision_modes": list(VISION_MODES),
         "photo_slots": [p.to_json() for p in s.photo_slots],
+        "car": car.config_json() if car is not None else None,   # (v0.8) 차 제어. 없으면 null
     }
 
 
@@ -95,12 +99,20 @@ class Hub:
             await self.send(ws, msg)
 
 
-def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
+def create_app(settings: Settings, backend: DroneBackend, car_link: CarLink | None = None) -> FastAPI:
+    """car_link: 차 연결 (car.make_car_link). None이면 차 기능 없음 (config.car = null)."""
     hub = Hub()
     link = VisionLink(settings, backend, emit=hub.broadcast)
     ctrl = Controller(settings, backend, emit=hub.broadcast, vision_link=link)
+    car = CarController(settings, car_link, emit=hub.broadcast) if car_link is not None else None
     incidents = IncidentStore(settings)
-    config_msg = make_config_message(settings, backend.name)
+    config_msg = make_config_message(settings, backend.name, car)
+
+    def state_message() -> dict:
+        msg = ctrl.state_message()
+        if car is not None:
+            msg["car"] = car.state_json()
+        return msg
     bg_tasks: set[asyncio.Task] = set()
 
     def spawn(coro) -> None:
@@ -124,7 +136,7 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         while True:
             if hub.clients:
                 try:
-                    await hub.broadcast(ctrl.state_message())
+                    await hub.broadcast(state_message())
                 except Exception:  # noqa: BLE001
                     log.exception("state push failed")
             await asyncio.sleep(period)
@@ -132,6 +144,9 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         tasks = [asyncio.create_task(c) for c in (connect_loop(), state_loop(), ctrl.watchdog_loop())]
+        if car is not None:
+            car.start()
+            tasks.append(asyncio.create_task(car_watchdog_loop()))
         try:
             yield
         finally:
@@ -139,11 +154,23 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
             for t in tasks + list(bg_tasks):
                 t.cancel()
             await asyncio.wait(tasks, timeout=SHUTDOWN_STEP_TIMEOUT_S)
-            for step in (ctrl.shutdown, link.shutdown, backend.close):
+            steps = (ctrl.shutdown, link.shutdown, backend.close) + ((car.shutdown,) if car is not None else ())
+            for step in steps:
                 try:
                     await asyncio.wait_for(step(), SHUTDOWN_STEP_TIMEOUT_S)
                 except Exception as e:  # noqa: BLE001 — 시간 초과 포함, 종료는 계속한다
                     log.warning("shutdown step %s: %r", step.__qualname__, e)
+
+    async def car_watchdog_loop(period_s: float = 0.1) -> None:
+        """조이스틱 끊김·앱 끊김이면 차를 세운다. 앱이 하나도 없으면 침묵 시간을 무한대로 본다."""
+        import time as _time
+        while True:
+            try:
+                silent = _time.monotonic() - ctrl.last_alive if hub.clients else math.inf
+                await car.watchdog_once(silent, settings.limits.link_timeout_s)
+            except Exception:  # noqa: BLE001
+                log.exception("car watchdog error")
+            await asyncio.sleep(period_s)
 
     app = FastAPI(title="drone relay server", lifespan=lifespan)
     app.state.controller = ctrl
@@ -151,11 +178,12 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
     app.state.backend = backend
     app.state.vision_link = link
     app.state.incidents = incidents
+    app.state.car = car
 
     @app.get("/")
     async def health() -> dict:
         """브라우저로 http://<서버IP>:8000/ 을 열어 서버가 살아 있는지 확인하는 용도."""
-        st = ctrl.state_message()
+        st = state_message()
         vision = None
         if backend.vision is not None:
             age = backend.vision.age_s()
@@ -260,8 +288,57 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         p = backend.truth_pose()
         if p is None:
             return vision_error("NOT_CONNECTED", "아직 시뮬레이터 위치를 읽지 못했습니다")
-        return {"ok": True, "x_m": round(p.x_cm / 100, 4), "y_m": round(p.y_cm / 100, 4),
-                "z_m": round(p.z_cm / 100, 4), "yaw_deg": round(p.yaw_deg, 2)}
+        out = {"ok": True, "x_m": round(p.x_cm / 100, 4), "y_m": round(p.y_cm / 100, 4),
+               "z_m": round(p.z_cm / 100, 4), "yaw_deg": round(p.yaw_deg, 2)}
+        ct = car.link.truth_map() if car is not None else None
+        if ct is not None:   # 가짜 차의 실제 위치 → 합성 카메라가 UGV 태그를 그린다 (v0.8)
+            out["ugv"] = {"x_m": round(ct[0] / 100, 4), "y_m": round(ct[1] / 100, 4), "yaw_deg": round(ct[2], 2)}
+        return out
+
+    @app.post("/vision/ugv")
+    async def vision_ugv(request: Request):
+        """vision/ → 드론 하단 카메라가 인식한 UGV 태그의 지도 위치 (docs/api.md 13.3). m 단위."""
+        if car is None:
+            return vision_error("BAD_REQUEST", "차 기능이 꺼져 있습니다 ([car] mode = \"off\")")
+        try:
+            body = await request.json()
+        except ValueError:
+            return vision_error("BAD_REQUEST", "JSON 형식이 아닙니다")
+        if not isinstance(body, dict):
+            return vision_error("BAD_REQUEST", "JSON 객체가 아닙니다")
+        vals = {}
+        for k in ("x_m", "y_m", "yaw_deg"):
+            v = body.get(k)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                return vision_error("BAD_REQUEST", f"{k}(숫자)가 필요합니다")
+            vals[k] = float(v)
+        m = settings.vision.margin_m
+        w_m, h_m = settings.map_width_cm / 100, settings.map_height_cm / 100
+        if not (-m <= vals["x_m"] <= w_m + m and -m <= vals["y_m"] <= h_m + m):
+            return vision_error("OUT_OF_BOUNDS", f"지도({w_m:g}m x {h_m:g}m, 여유 {m:g}m) 밖 좌표입니다")
+        car.on_vision(vals["x_m"] * 100.0, vals["y_m"] * 100.0, vals["yaw_deg"])
+        return {"ok": True}
+
+    @app.post("/vision/ugv_rel")
+    async def vision_ugv_rel(request: Request):
+        """vision/ → 드론 하단 카메라가 본 UGV 태그의 드론 기준 위치 (docs/api.md 13.5, 따라가기). m 단위.
+        드론 지도 위치를 몰라도 보낸다 → 바닥 지도 태그가 안 보여도 따라갈 수 있다."""
+        try:
+            body = await request.json()
+        except ValueError:
+            return vision_error("BAD_REQUEST", "JSON 형식이 아닙니다")
+        if not isinstance(body, dict):
+            return vision_error("BAD_REQUEST", "JSON 객체가 아닙니다")
+        vals = {}
+        for k in ("forward_m", "right_m", "rel_yaw_deg"):
+            v = body.get(k)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                return vision_error("BAD_REQUEST", f"{k}(숫자)가 필요합니다")
+            vals[k] = float(v)
+        if abs(vals["forward_m"]) > 3.0 or abs(vals["right_m"]) > 3.0:
+            return vision_error("OUT_OF_BOUNDS", "드론에서 3m 넘게 떨어진 값입니다")
+        ctrl.on_ugv_relative(vals["forward_m"] * 100.0, vals["right_m"] * 100.0, vals["rel_yaw_deg"])
+        return {"ok": True}
 
     @app.websocket("/vision/video")
     async def vision_video(ws: WebSocket) -> None:
@@ -293,7 +370,7 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         log.info("app connected (%d clients)", len(hub.clients))
         await hub.send(ws, config_msg)
         await hub.send(ws, {"type": "incidents", "items": incidents.items()})
-        await hub.send(ws, ctrl.state_message())
+        await hub.send(ws, state_message())
         # 새로 연결한 앱이 명령권을 갖는다. 아직 ping을 못 보냈으니 생존 타이머를 새로 시작한다.
         ctrl.note_alive()
         if len(hub.clients) > 1:
@@ -313,6 +390,8 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
                 # 명령권 넘겨받기 (docs/api.md 1장): 남은 앱 중 가장 최근에 연결된 앱(clients[-1])이 넘겨받는다.
                 # 넘겨받는 순간 바로 자동 착륙하지 않도록 새 명령권 앱의 ping 타이머를 지금부터 센다.
                 ctrl.note_alive()
+                if car is not None:
+                    await car.on_controller_change()
                 log.info("controller handed over to remaining app (%d clients)", len(hub.clients))
                 await hub.broadcast(make_event(
                     "info", "CONTROLLER_CHANGED",
@@ -333,11 +412,22 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
             if is_controller:
                 ctrl.note_alive()
             return
+        if kind == "car_drive":   # (v0.8) 조이스틱, 응답 없음. 명령권 앱만
+            if is_controller and car is not None:
+                ctrl.note_alive()
+                await car.drive(msg)
+            return
         if kind == "cmd":
             if not is_controller:
                 await hub.send(ws, make_ack(msg.get("id"), "BUSY", "다른 앱이 제어 중입니다 (마지막에 연결한 앱만 명령 가능)"))
                 return
             ctrl.note_alive()
+            if msg.get("cmd") in CAR_COMMANDS:
+                if car is None:
+                    await hub.send(ws, make_ack(msg.get("id"), "BAD_REQUEST", "이 서버는 차 기능이 꺼져 있습니다"))
+                else:
+                    await hub.send(ws, await car.handle_cmd(msg))
+                return
             await hub.send(ws, await ctrl.handle_cmd(msg))
             return
         if "id" in msg:

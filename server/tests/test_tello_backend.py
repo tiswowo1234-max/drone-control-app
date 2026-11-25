@@ -282,3 +282,38 @@ def test_land_during_move_stops_first_then_lands_quickly():
         assert t.calls[-1] == ("land",) and not b.command_in_progress
         await b.close()
     asyncio.run(go())
+
+
+# ================================================================ 속도 명령 rc (UGV 따라가기, v0.8)
+
+class FakeRcTello(FakeSimTello):
+    def send_rc_control(self, lr, fb, ud, yaw):
+        assert all(isinstance(v, int) and -100 <= v <= 100 for v in (lr, fb, ud, yaw))
+        self.calls.append(("rc", lr, fb, ud, yaw))
+
+
+def test_set_velocity_sends_rc_and_moves_estimate():
+    async def go():
+        t = FakeRcTello(yaw=90.0)   # 드론이 지도 오른쪽(+x)을 봄
+        prov = DeadReckoningProvider(Pose(0, 0, 0))
+        b = make_backend(t, prov, cfg=TelloCfg(go_axes="sdk", rc_per_cm_s=2.0), frame=DroneFrame())
+        await b.connect()
+        await b.takeoff()
+        p0 = prov.pose()                             # 연결할 때 home으로 맞춰진다
+        await b.set_velocity(10, -5)                 # 앞 10cm/s, 왼쪽 5cm/s
+        assert t.calls[-1] == ("rc", -10, 20, 0, 0)  # rc(좌우, 앞뒤, 상하, 회전) = cm/s x 2
+        await asyncio.sleep(0.5)
+        await b.hover()                              # 움직이던 중이면 rc 0 0 0 0
+        assert t.calls[-1] == ("rc", 0, 0, 0, 0)
+        p = prov.pose()
+        # 0.5초 동안 앞(+x) 5cm, 왼쪽(+y) 2.5cm 움직였다고 추정
+        assert p.x_cm - p0.x_cm == pytest.approx(5, abs=0.6) and p.y_cm - p0.y_cm == pytest.approx(2.5, abs=0.4)
+        n = len(t.calls)
+        await b.hover()                              # 이미 멈춰 있으면 아무것도 안 보냄
+        assert len(t.calls) == n
+        await b.set_velocity(500, 0)                 # rc 상한 100
+        assert t.calls[-1] == ("rc", 0, 100, 0, 0)
+        await b.land()
+        assert ("rc", 0, 0, 0, 0) in t.calls[n + 1:] and t.calls[-1] == ("land",)
+        await b.close()
+    asyncio.run(go())

@@ -111,6 +111,9 @@ class TelloBackend(DroneBackend):
         self._yaw_samples: list[float] = []
         self._yaw_seen_at: float | None = None
         self.heading_offset_deg: float | None = None
+        # 속도 명령 (set_velocity, 드론 기준 앞·오른쪽·위 cm/s)과 그 시작 시각 — 추정 위치를 옮기는 데 쓴다
+        self._vel = (0.0, 0.0, 0.0)
+        self._vel_t = time.monotonic()
 
     # ------------------------------------------------------------ 연결·상태
     async def connect(self) -> None:
@@ -436,6 +439,7 @@ class TelloBackend(DroneBackend):
         """반환: TT에 보낸 이동 구간 수 (0 = 목표가 이미 20cm 이내라 움직이지 않음)."""
         if not self._flying:
             raise BackendError("비행 중이 아닙니다")
+        await self._stop_velocity()   # 따라가기(속도 명령) 중이었으면 먼저 멈춘다
         cur = self.provider.pose()
         if cur is None:
             raise BackendError("현재 위치를 알 수 없습니다")
@@ -469,6 +473,7 @@ class TelloBackend(DroneBackend):
                 args = (fwd, -right, up)
 
             def go(a=args, d=map_delta):
+                self.provider.begin_move()   # 구간 시작 시각 (카메라가 이미 반영한 몫을 다시 더하지 않게)
                 self._cmd.go_xyz_speed(*a, int(self.cfg.speed_cm_s))
                 # 추정 위치 갱신도 명령 스레드에서 한다: 미션이 취소돼도 이미 날아간 구간은 반영되도록
                 self.provider.on_move(*d)
@@ -483,13 +488,55 @@ class TelloBackend(DroneBackend):
         """진행 중인 명령(최대 한 구간)이 끝날 때까지 기다린다."""
         await self._call(lambda: None)
 
+    def _rc_values(self, fwd: float, right: float, up: float, yaw: float) -> tuple[int, int, int, int]:
+        """드론 기준 cm/s → djitellopy send_rc_control(좌우, 앞뒤, 상하, 회전) 값 (-100~100, 오른쪽·앞·위·시계 +)."""
+        k = self.cfg.rc_per_cm_s
+
+        def c(v: float) -> int:
+            return int(max(-100, min(100, round(v))))
+        return c(right * k), c(fwd * k), c(up * k), c(yaw)
+
+    def _velocity_moved(self, now: float) -> tuple[float, float, float] | None:
+        """지난 set_velocity 속도로 지금까지 움직였을 지도 변위 (cm). 멈춰 있었으면 None."""
+        fwd, right, up = self._vel
+        dt = now - self._vel_t
+        if dt <= 0 or (fwd, right, up) == (0.0, 0.0, 0.0):
+            return None
+        wx, wy = body_to_world(fwd * dt, right * dt, self._move_yaw())
+        return self.frame.drone_to_map(wx, wy, up * dt)
+
+    async def set_velocity(self, fwd_cm_s: float, right_cm_s: float, up_cm_s: float = 0.0,
+                           yaw_deg_s: float = 0.0) -> None:
+        """rc 속도 명령 (응답 없음). yaw_deg_s는 rc 회전 값 그대로 (따라가기는 0만 쓴다)."""
+        if not self._flying:
+            raise BackendError("비행 중이 아닙니다")
+        args = self._rc_values(fwd_cm_s, right_cm_s, up_cm_s, yaw_deg_s)
+        new_vel = (float(fwd_cm_s), float(right_cm_s), float(up_cm_s))
+
+        def rc():
+            now = time.monotonic()
+            d = self._velocity_moved(now)
+            if d is not None:
+                self.provider.on_move(*d)       # 지난 속도로 움직인 만큼 (카메라가 이미 반영한 몫은 빼고)
+            self.provider.begin_move()
+            self._cmd.send_rc_control(*args)
+            self._vel, self._vel_t = new_vel, now
+        await self._call(rc)
+
+    async def _stop_velocity(self) -> None:
+        """속도 명령 중이었으면 rc 0 0 0 0을 보내 멈춘다."""
+        if self._vel != (0.0, 0.0, 0.0) and self._cmd is not None and self._flying:
+            await self.set_velocity(0.0, 0.0, 0.0, 0.0)
+
     async def hover(self) -> None:
         await self._interrupt_if_busy()
+        await self._stop_velocity()
 
     async def land(self) -> None:
         await self._interrupt_if_busy()
         if not self._flying:
             return
+        await self._stop_velocity()
         await self._descend_before_land()
 
         def land():
@@ -530,3 +577,4 @@ class TelloBackend(DroneBackend):
         # 명령 스레드를 기다리지 않고 monitor 연결로 바로 보낸다
         await asyncio.to_thread(self._mon.emergency)
         self._flying = False
+        self._vel = (0.0, 0.0, 0.0)

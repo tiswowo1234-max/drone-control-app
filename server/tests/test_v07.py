@@ -657,7 +657,7 @@ def test_sim_truth_from_simulator_state():
 def test_health_has_v07_fields(settings):
     with TestClient(create_app(settings, MockBackend(settings))) as client:
         h = client.get("/").json()
-        assert h["api_version"] == "0.7"
+        assert h["api_version"] == "0.8"
         assert h["vision_link"]["mode"] == "tt_down" and h["vision_link"]["bridge_connected"] is False
         assert h["vision_link"]["video"] == {"last_frame_age_s": None, "viewers": 0, "frames_received": 0,
                                              "frames_dropped": 0, "stale_s": 2.0}

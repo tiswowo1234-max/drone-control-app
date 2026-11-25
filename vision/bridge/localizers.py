@@ -111,6 +111,11 @@ class TtDownLocalizer:
             (used if x0 <= cx <= x1 and y0 <= cy <= y1 else ignored).append(tg)
         return used, ignored
 
+    def camera_matrix(self, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
+        """원본 화면 (w, h) 기준 카메라 행렬·왜곡 (UGV 태그 자세 계산용)."""
+        cam = self._base.for_size(w, h)
+        return cam.K, cam.dist
+
     def _localizer(self, w: int, h: int):
         """(w,h) = 원본 화면 크기. upscale이면 확대한 화면용 카메라 모델."""
         key = (w, h)
@@ -253,6 +258,11 @@ class Esp32Localizer:
         self.live = LiveLocalization(self.matcher, CameraPreprocessor(self.pcfg), localization_mode=self.loc_mode,
                                      tag_localizer=self.tag_localizer, lighting=self.lighting)
         self.last_t = None
+
+    def camera_matrix(self, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
+        """시야각만 아는 핀홀 근사 (UGV 태그 자세 계산용). esp32 왜곡 보정은 아직 반영하지 않음."""
+        from .geometry import pinhole_K
+        return pinhole_K(w, h, self.hfov), np.zeros(5)
 
     def process(self, image: np.ndarray, t: float, drone: dict | None = None) -> PoseResult:
         from localization.camera_interface import CameraFrame

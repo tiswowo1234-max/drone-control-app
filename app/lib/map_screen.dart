@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'car_panel.dart';
 import 'config.dart';
 import 'drone_client.dart';
 import 'geo.dart';
@@ -40,6 +41,12 @@ class _MapScreenState extends State<MapScreen> {
   /// 위치 추적 카메라 전환 명령을 보내고 응답을 기다리는 중
   bool _switchingMode = false;
 
+  /// 차(UGV) 조종 모드 (v0.8). 켜면 지도를 눌러 차 경로점을 찍고, 아래에 차 조종 패널이 보인다.
+  bool _carMode = false;
+
+  /// 차 경로점 (cm, 출발 위치 제외). 바꿀 때마다 새 목록을 만든다 (지도 다시 그리기).
+  List<Offset> _carDraft = const [];
+
   StreamSubscription<DroneEvent>? _eventSub;
 
   @override
@@ -63,11 +70,26 @@ class _MapScreenState extends State<MapScreen> {
         final config = _c.config;
         final st = _c.state;
         final markerIssue = _marker == null ? null : checkTarget(config, _marker!);
+        // 서버가 차 기능을 끈 채로 다시 연결되면 차 모드도 끈다
+        final carMode = _carMode && config.car != null;
         return Scaffold(
           appBar: AppBar(
             title: const Text('캠퍼스 경비 드론'),
             backgroundColor: Theme.of(context).colorScheme.inversePrimary,
             actions: [
+              if (config.car != null)
+                IconButton(
+                  key: const Key('btn-car-mode'),
+                  tooltip: _carMode ? '드론 조종으로 돌아가기' : '차(UGV) 조종',
+                  isSelected: _carMode,
+                  icon: const Icon(Icons.local_police_outlined),
+                  selectedIcon: const Icon(Icons.local_police),
+                  onPressed: () => setState(() {
+                    _carMode = !_carMode;
+                    _marker = null; // 드론 출동 마커와 차 경로점이 섞이지 않게
+                    _markerSlot = null;
+                  }),
+                ),
               IconButton(
                 key: const Key('btn-video'),
                 tooltip: '드론 카메라 실시간 영상',
@@ -106,13 +128,16 @@ class _MapScreenState extends State<MapScreen> {
                           droneFresh: _c.online,
                           marker: _marker,
                           markerOk: markerIssue == null,
-                          onMarkerMoved: _marker == null
+                          onMarkerMoved: (_marker == null || carMode)
                               ? null
                               : (cm) => setState(() {
                                     _marker = cm;
                                     _markerSlot = null;
                                   }),
-                          onSlotTap: _sending ? null : _dispatchToSlot,
+                          onSlotTap: (_sending || carMode) ? null : _dispatchToSlot,
+                          car: st?.car,
+                          carDraft: carMode ? _carDraft : const [],
+                          onMapTap: carMode ? (cm) => _addCarPoint(config, cm) : null,
                           incidents: _c.incidents,
                           isIncidentAcked: _c.isAcked,
                           onIncidentTap: (i) => openIncidentDetail(context, _c, i),
@@ -130,11 +155,27 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
                 _statusPanel(config, st),
-                if (config.visionModes.isNotEmpty) _visionPanel(config, st),
-                if (_marker != null)
-                  _dispatchPanel(config, st, markerIssue)
-                else
-                  _mainButtons(config),
+                if (carMode)
+                  CarPanel(
+                    client: _c,
+                    config: config.car!,
+                    car: st?.car,
+                    draft: _carDraft,
+                    onUndo: () => setState(() =>
+                        _carDraft = _carDraft.sublist(0, _carDraft.length - 1)),
+                    onClear: () => setState(() => _carDraft = const []),
+                    onRouteSent: () => setState(() => _carDraft = const []),
+                    onResult: _showResult,
+                    droneFlying: st?.flying ?? false,
+                    droneMode: st?.mode ?? 'idle',
+                  )
+                else ...[
+                  if (config.visionModes.isNotEmpty) _visionPanel(config, st),
+                  if (_marker != null)
+                    _dispatchPanel(config, st, markerIssue)
+                  else
+                    _mainButtons(config),
+                ],
                 _controlButtons(config, st),
               ],
             ),
@@ -411,6 +452,25 @@ class _MapScreenState extends State<MapScreen> {
       _marker = slot.center;
       _markerSlot = slot;
     });
+  }
+
+  // ---------------------------------------------------------------- 차 경로점 (v0.8)
+
+  void _addCarPoint(AppConfig config, Offset cm) {
+    final car = config.car!;
+    if (_carDraft.length >= car.maxPoints) {
+      _snack('경로점은 최대 ${car.maxPoints}개입니다', Colors.red.shade800);
+      return;
+    }
+    final m = car.mapMarginCm;
+    if (cm.dx < m || cm.dy < m || cm.dx > config.mapWidthCm - m || cm.dy > config.mapHeightCm - m) {
+      _snack('지도 가장자리(${m.toStringAsFixed(0)}cm 안쪽)에는 경로점을 놓을 수 없습니다', Colors.red.shade800);
+      return;
+    }
+    setState(() => _carDraft = [
+          ..._carDraft,
+          Offset(double.parse(cm.dx.toStringAsFixed(1)), double.parse(cm.dy.toStringAsFixed(1))),
+        ]);
   }
 
   // ---------------------------------------------------------------- 위치 추적 카메라 (11장)

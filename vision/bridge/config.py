@@ -22,6 +22,20 @@ class Slot:
 
 
 @dataclass(frozen=True)
+class UgvConfig:
+    """[ugv] UGV 따라가기 (설정 파일에 섹션이 없으면 꺼진 상태)."""
+    enabled: bool = False
+    tag_id: int = 100
+    tag_size_m: float = 0.08
+    height_m: float = 0.15
+    tag_yaw_deg: float = 0.0
+    follow_distance_m: float = 0.12
+    max_tilt_deg: float = 25.0
+    log_every_s: float = 1.0
+    max_height_err_m: float = 0.08
+
+
+@dataclass(frozen=True)
 class Settings:
     map_w_m: float
     map_h_m: float
@@ -85,6 +99,7 @@ class Settings:
     photo_search_period_s: float
     slots: tuple[Slot, ...] = field(default_factory=tuple)
     source: Path | None = None
+    ugv: UgvConfig = field(default_factory=UgvConfig)
 
     def tt_camera_path(self) -> Path | None:
         if not self.tt_camera_file:
@@ -165,5 +180,20 @@ def load(path: Path | str = DEFAULT_SETTINGS) -> Settings:
         tilt_log_every_s=float(br.get("tilt_log_every_s", 1.0)),
         tt_hfov_deg=float(br["tt_hfov_deg"]), tt_camera_file=str(br.get("tt_camera_file", "")),
         photo_search_period_s=float(br["photo_search_period_s"]),
-        slots=tuple(slots), source=path,
+        slots=tuple(slots), source=path, ugv=_ugv(raw.get("ugv")),
     )
+
+
+def _ugv(u: dict | None) -> UgvConfig:
+    if not u:
+        return UgvConfig()
+    cfg = UgvConfig(
+        enabled=bool(u.get("enabled", True)), tag_id=int(u["tag_id"]),
+        tag_size_m=float(u["tag_size_cm"]) / 100, height_m=float(u.get("height_cm", 0.0)) / 100,
+        tag_yaw_deg=float(u.get("tag_yaw_deg", 0.0)),
+        follow_distance_m=float(u.get("follow_distance_cm", 12.0)) / 100,
+        max_tilt_deg=float(u.get("max_tilt_deg", 25.0)), log_every_s=float(u.get("log_every_s", 1.0)),
+        max_height_err_m=float(u.get("max_height_err_cm", 8.0)) / 100)
+    if cfg.tag_size_m <= 0:
+        raise ValueError("[ugv] tag_size_cm는 0보다 커야 합니다")
+    return cfg

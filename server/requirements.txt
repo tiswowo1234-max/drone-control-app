@@ -5,6 +5,8 @@ pytest>=8
 httpx>=0.27
 # real 백엔드(실제 TT)용 — 서버는 영상(get_frame_read)을 쓰지 않고 명령·상태만 쓴다
 djitellopy>=2.5.0
+# 차(UGV) BLE 연결 ([car] mode = "ble") — Windows 내장 블루투스 사용
+bleak>=0.22
 # sim 백엔드 전용 (가짜 djitellopy가 import함). 설치가 안 되면 생략해도 서버는 동작한다.
 numpy
 opencv-python

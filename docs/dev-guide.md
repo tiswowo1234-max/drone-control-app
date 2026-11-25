@@ -220,6 +220,10 @@ cd C:\dev\drone-control-app\app; C:\dev\flutter\bin\flutter.bat test          # 
 ## 8. UGV 추종 병합 안내
 
 > 아래는 지금 코드 구조에 맞춘 **제안**입니다. UGV 담당 조원의 코드·하드웨어를 보고 확정한 뒤, 결정은 `docs/decisions.md`에 기록합니다.
+>
+> **2026-11-25 결정·구현 현황:** UGV 위치는 **드론 하단 카메라가 UGV 윗면 태그(tag36h11 100번)를 보는 방식**으로 정했습니다(아래 8.2의 `/ugv/pose`·`state.ugv` 대신
+> `POST /vision/ugv`·`state.car`, api.md 13장). 차(UGV)는 노트북 서버가 BLE로 직접 조종합니다(`server/drone_server/car.py`, `[car]`).
+> **드론 추종 비행도 구현했습니다(2026-11-25, 실물 미시험):** 컨트롤러 미션 `_m_follow`(cmd `follow_start`, mode `following`) + 백엔드 `set_velocity`(TT `rc`). 거리는 지도 좌표가 아니라 **vision이 보낸 드론 기준 차 위치**(`POST /vision/ugv_rel`)로 잽니다. 설정 `[follow]`, 명세 api.md 13.5, 시험 `server/tests/test_follow.py`. 아래 8.2~8.4는 처음 제안이라 이름(`/ugv/pose`, `state.ugv`)이 실제와 다릅니다.
 
 ### 8.1 먼저 정할 것 (조원에게 확인)
 | 질문 | 왜 중요한가 |
