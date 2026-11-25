@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable
 from .backends.base import DroneBackend
 from .safety import SafetyError, check_battery, check_target, clamp_alt
 from .settings import VISION_MODES, Settings
+from .tags import load_tags, nearest_tag
 
 log = logging.getLogger("drone_server.controller")
 
@@ -57,6 +58,9 @@ class Controller:
         self.last_alive = time.monotonic()
         self._low_batt_warned = False
         self._was_connected: bool | None = None
+        # 초기 정렬 (2026-11-25): 연결 후 첫 이륙 때 가장 가까운 태그 위에서 위치·방향을 확정한다
+        self.aligned = False
+        self._tags = load_tags(settings) if settings.align.enabled else []
 
     # ------------------------------------------------------------------ 출력
     async def event(self, level: str, code: str, message: str) -> None:
@@ -128,6 +132,7 @@ class Controller:
     async def _m_takeoff(self) -> None:
         self.mode = "taking_off"
         await self.b.takeoff()
+        await self._align(self.s.limits.default_alt_cm)
         p = self.b.telemetry().pos
         if p is not None:
             await self.b.move_to(p.x_cm, p.y_cm, self.s.limits.default_alt_cm)
@@ -138,6 +143,7 @@ class Controller:
         if not self.b.telemetry().flying:
             self.mode = "taking_off"
             await self.b.takeoff()
+            await self._align(z)
         self.mode = "moving"
         sent = await self.b.move_to(x, y, z)
         self.mode = "hovering"
@@ -157,6 +163,56 @@ class Controller:
         self.target = (self.s.home_x_cm, self.s.home_y_cm)
         await self.b.move_to(self.s.home_x_cm, self.s.home_y_cm, z)
         await self._m_land()
+
+    async def _align(self, z: float) -> None:
+        """초기 정렬: 이륙 직후 가장 가까운 AprilTag 위로 가서, 카메라 위치(와 real이면 방향 보정값)가
+        충분히 모일 때까지 호버링한다. 성공하면 다시 연결될 때까지 하지 않는다. 실패해도 비행은 계속한다.
+
+        왜: 서버는 '드론을 home에 지도 위쪽을 보게 놓고 켰다'고 가정하고 시작한다. 놓은 위치·방향이 조금만 틀려도
+        첫 이동이 어긋나므로(2026-11-25 실물: 지나침), 출동 전에 태그 바로 위(왜곡이 가장 작은 화면 가운데)에서
+        위치와 방향을 확정한다. mode는 'taking_off'로 둔다(앱에는 '이륙 중', 그동안 goto는 BUSY)."""
+        c = self.s.align
+        v = self.b.vision
+        if self.aligned or not c.enabled or v is None or not self._tags:
+            return
+        t_end = time.monotonic() + c.wait_fix_s
+        while not v.fresh() and time.monotonic() < t_end:   # 이륙 직후 첫 카메라 위치를 잠깐 기다린다
+            await asyncio.sleep(0.1)
+        p = self.b.telemetry().pos
+        if p is None:
+            await self.event("warn", "ALIGN_SKIPPED", "현재 위치를 몰라 초기 정렬을 건너뜁니다")
+            return
+        tag, dist = nearest_tag(self._tags, p.x_cm, p.y_cm)
+        if dist > c.max_tag_dist_cm:
+            await self.event("warn", "ALIGN_SKIPPED",
+                             f"가장 가까운 태그(ID {tag.id})가 {dist:.0f}cm 떨어져 있어 초기 정렬을 건너뜁니다")
+            return
+        await self.event("info", "ALIGN_START", f"초기 정렬: 태그 ID {tag.id} 위로 가서 위치·방향을 맞춥니다")
+        log.info("초기 정렬: 현재 (%.1f, %.1f) cm [%s] → 태그 ID %d (%.1f, %.1f) cm, 거리 %.1f cm",
+                 p.x_cm, p.y_cm, self.b.telemetry().pos_source, tag.id, tag.x_cm, tag.y_cm, dist)
+        prev_target, self.target = self.target, (tag.x_cm, tag.y_cm)
+        try:
+            await self.b.move_to(tag.x_cm, tag.y_cm, z)
+            seq0 = v.seq
+            t_end = time.monotonic() + c.timeout_s
+            n, heading = 0, None
+            while time.monotonic() < t_end:
+                n = v.fixes_since(seq0, c.min_confidence)
+                heading = self.b.heading_ready()
+                if n >= c.min_fixes and (not c.require_heading or heading is not False):
+                    self.aligned = True
+                    p = self.b.telemetry().pos
+                    off = getattr(self.b, "heading_offset_deg", None)
+                    note = "" if off is None else f", 방향 보정 {off:+.0f}°"
+                    where = "" if p is None else f" 위치 ({p.x_cm:.0f}, {p.y_cm:.0f}) cm"
+                    await self.event("info", "ALIGN_DONE", f"초기 정렬 완료: 태그 ID {tag.id}{where}{note}")
+                    return
+                await asyncio.sleep(0.1)
+            why = f"카메라 위치 {n}/{c.min_fixes}개" + (", 방향 미확정" if heading is False else "")
+            await self.event("warn", "ALIGN_FAILED",
+                             f"초기 정렬 실패: 태그 ID {tag.id} 위에서 {c.timeout_s:g}초 동안 {why} — 추정 위치로 계속합니다")
+        finally:
+            self.target = prev_target
 
     async def _m_hover(self) -> None:
         await self.b.hover()
@@ -295,6 +351,7 @@ class Controller:
         t = self.b.telemetry()
         if self._was_connected is not None and t.connected != self._was_connected:
             if t.connected:
+                self.aligned = False  # 다시 연결되면 TT 방향 센서 0°가 바뀌므로 다시 정렬한다
                 await self.event("info", "DRONE_CONNECTED", "드론과 연결되었습니다")
             else:
                 await self.event("error", "DRONE_DISCONNECTED", "드론과 연결이 끊겼습니다")

@@ -91,6 +91,30 @@ cd C:\dev\drone-control-app\vision
 
 ## 4. 실물 TT 하단 카메라 (`tt_down` 모드)
 
+- **슬롯 보드 태그(`[bridge] extra_tags`, ID 39~54):** 사진 슬롯 S1~S4 옆에 태그를 4개씩 더 붙인다. 슬롯 위 호버링(고도 50cm, 영역 0.7)에서
+  쓸 수 있는 태그 2개 이상이 5~9% → 98~100%, 위치가 나오는 비율 59~78% → 100% (합성 화면). 조원 원본은 그대로 두고
+  확장 배치 파일·지도 그림을 `vision/data/maps/`에 만든다(`vision/tools/make_slot_boards.py`, 인쇄는 `--print`).
+  - 인쇄: `vision/print/slot_boards.pdf`(보드 4장, 실제 크기), 붙이는 위치: `vision/print/slot_boards_guide.png`
+  - 보드는 **한 장 그대로** 자른다(태그를 따로 자르지 않음). 점선 사진 자리를 슬롯 위치에 맞추고, 보드 위쪽을 슬롯 위쪽(안내도 초록 화살표)으로. 사진은 점선 안에 붙인다.
+  - S3은 기존 태그 11번과 겹치지 않도록 위아래(150×200mm) 배치, 나머지는 양옆(250×100mm).
+  - 보드를 붙이지 않은 상태로 시험할 때는 `extra_tags = false`(없는 태그를 기대하지 않도록).
+- **드론 기울기·거리 센서 사용(2026-11-23):** 서버가 TT 자세(pitch·roll)와 거리 센서 높이를 0.1초마다 보낸다(`drone_state`).
+  - `tt_use_imu = true`: 기울기를 조원 위치 계산의 '중력 방향'으로 넣는다. 합성 화면(드론 ±10° 기울기, 렌즈 왜곡, 50cm): 오차 중앙값 5.0 → 1.6cm, 최대 11 → 5cm.
+  - `tt_tof_check_cm = 15`: 카메라 계산 높이와 거리 센서 높이가 15cm 넘게 다르면 그 위치를 버린다(창에 `(높이 불일치로 버림: …)`).
+  - **부호 확인 완료(2026-11-23 실물, 둘 다 1):** `tt_pitch_sign`·`tt_roll_sign`. 다시 확인하려면: 태그 위에서 드론을 손으로 오른쪽이 내려가게 10° 기울였을 때 창의 `좌우`가 +면 맞다(−면 `tt_roll_sign = -1`). 기수를 들었을 때 `앞뒤`가 +면 맞다.
+  - 거리 센서와 카메라 높이가 늘 일정하게 다르면(예: 항상 8cm) `tt_tof_offset_cm`로 맞춘다. 버림이 계속되면 창 출력의 두 높이를 확인.
+- **가운데 영역 태그만 사용(`[bridge] tt_tag_roi`, 현재 0.7 — 처음 0.5로 넣었다가 S4 위에서 쓸 태그가 거의 없어 2026-11-23에 0.7로 넓힘):** 태그 중심이 화면 가운데(가로·세로 각각 이 비율) 안에 있는 태그만 위치 계산에 쓴다.
+  보정 안 된 렌즈는 가장자리 왜곡이 커서 가장자리 태그가 위치를 틀리게 한다. 합성 화면(렌즈 왜곡을 일부러 넣음, 고도 50cm) 측정:
+  전체 사용 오차 중앙값 6.3cm·10cm 넘게 틀린 화면 11/200 → 0.5 사용 3.0cm·0/200. 대신 위치가 나오는 화면이 67% → 31%로 준다.
+  카메라 보정(5장)을 하면 넓혀(0.7~1.0) 볼 것. 창 출력에 `(가장자리라 뺌: ID …)`로 뺀 태그가 표시된다.
+- **로그 파일:** 창에 나오는 상태 줄·`[태그]`·`[자세]` 줄은 `vision\logs\bridge-날짜.log`에도 남는다(하루 한 파일, 실행마다 구분선, git 제외). 서버 로그(`server\logs\`)와 시각을 맞춰 보면 된다.
+- **태그 인식 확인(창 출력):** `[bridge] tag_log = true`(또는 `--tag-log`)면 태그를 읽을 때마다 이 창에 한 줄씩 나온다.
+  ```
+  [태그] 17:35:42 [tt_down] ID 33(22px)  ID 37(22px) | 위치 (131.9, 99.8) cm 높이 50cm 방향 0° [측정]
+  [태그] 17:35:43 태그 없음 (마지막: ID 33)
+  ```
+  괄호 안 px는 화면 속 태그 한 변의 크기(12px보다 작으면 잘 안 읽힘). 같은 태그가 계속 보이면 `tag_log_every_s`(0.5초)마다 찍는다.
+
 - TT 영상 켜기(`downvision 1` → `streamon`)는 **서버가 한다**(서버 `real` + 모드 `tt_down`일 때).
   TT는 영상을 노트북의 **UDP 11111** 포트로 보내고, 그 포트는 **연결 프로그램이 받는다**(서버는 받지 않는다. 한 포트는 한 프로그램만).
 - 순서: TT Wi-Fi에 노트북 연결 → `server\run_server.bat real` → `vision\run_bridge.bat` → 앱에서 TT 카메라 선택.
@@ -110,7 +134,8 @@ cd C:\dev\drone-control-app\vision
 
 ## 5. TT 하단 카메라 보정 (정확도를 높이려면)
 
-처음에는 시야각 추정값(`[bridge] tt_hfov_deg = 60`, 모름)으로 계산한다. 실제 렌즈 값을 재면 위치·높이가 정확해진다.
+보정 전에는 시야각 하나(`[bridge] tt_hfov_deg`)로 계산한다. 처음 가정은 60°였고, 2026-11-25 비행 로그(카메라 높이가 거리 센서의 1.34배)로
+**75.5°**로 바꿨다(다음 비행에서 비율이 1.0 근처인지 확인). 렌즈 왜곡까지 재면 위치·높이가 더 정확해진다.
 조원 `calibrate_camera.py`를 **TT 영상 320×240 그대로** 쓴다.
 
 1. 체스판을 인쇄한다(예: 10×7칸, 한 칸 25mm). 칸 크기를 자로 잰다. 딱딱한 판에 붙인다.
@@ -126,7 +151,7 @@ cd C:\dev\drone-control-app\vision
    ..\..\..\.venv\Scripts\python.exe calibrate_camera.py $files --cols 9 --rows 6 --square-mm 25 --out ..\..\..\calibration\tt_down_320x240.json
    ```
    마지막에 `RMS reprojection error 0.4 px`처럼 나온다. 0.5px 이하면 좋고, 1px 넘으면 흐린 사진을 지우고 다시 한다.
-4. `config/settings.toml`의 `[bridge] tt_camera_file = "vision/calibration/tt_down_320x240.json"`으로 바꾼다(병합 세션에 요청).
+4. `config/settings.toml`의 `[bridge] tt_camera_file = "vision/calibration/tt_down_320x240.json"`으로 바꾼다.
 
 ## 6. 실행 옵션
 
@@ -147,6 +172,9 @@ cd C:\dev\drone-control-app\vision
 | `--tt-upscale 2` | tt_down: 태그 찾기 전 화면 2배 확대 (아래 7장) |
 
 ## 7. 측정 결과와 알아 둘 점 (합성 카메라, 2026-11-21)
+
+> **기록용 표입니다.** 당시 가정(시야각 60°, 고도 80cm)으로 잰 값입니다. 지금 설정은 고도 50cm, 시야각 75.5°, 태그 영역 0.7입니다.
+> 이후 측정(고도 40/50/80cm 비교 등)은 [docs/decisions.md](../docs/decisions.md) 2026-11-23 항목에 있습니다.
 
 **tt_down, 320×240 흑백, 고도 80cm** (시야각 60° 가정, 지도 위 무작위 200곳, 조원 합성 카메라의 흐림·잡음·JPEG 포함, 한 장씩 독립 계산):
 
@@ -191,7 +219,13 @@ vision/
     synthetic.py       합성 카메라
     server_link.py     서버 HTTP·WebSocket
     geometry.py        좌표·투영·yaw 변환
-  teammate/          조원 코드 사본 (SOURCE.md)
-  tests/             자동 시험
+  teammate/          조원 코드 사본 (SOURCE.md) — 조원 원본 폴더는 수정하지 않고, 바꾼 곳은 SOURCE.md에 적는다
+  data/maps/         확장 태그 배치·지도 그림 (슬롯 보드 태그, [bridge] extra_tags = true일 때만)
+  print/             인쇄용 AprilTag PDF (간단판·자르기판·슬롯 보드)와 안내도
+  tools/             인쇄 PDF 생성 스크립트 (make_compact_tags.py, make_tag_cut_sheet.py, make_slot_boards.py)
+  tests/             자동 시험 (test_imu.py: 기울기 보정 추가)
+  logs/              창 출력 기록 bridge-날짜.log (git 제외)
   setup.bat, run_bridge.bat, requirements.txt
 ```
+
+새 카메라 입력(예: Unity 하단 카메라)이나 새 검출(예: UGV 표식)을 붙이는 방법은 [docs/dev-guide.md](../docs/dev-guide.md) 5·8·9장을 보세요.

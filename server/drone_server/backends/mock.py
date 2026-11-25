@@ -92,6 +92,14 @@ class MockBackend(DroneBackend):
         t = self.truth
         return Pose(t.x_cm, t.y_cm, t.z_cm, t.yaw_deg)
 
+    def attitude(self) -> dict | None:
+        """가짜 드론: 늘 수평(기울기 0), 거리 센서 = 참값 높이."""
+        if not self.connected:
+            return None
+        t = self.truth
+        return {"pitch_deg": 0.0, "roll_deg": 0.0, "yaw_deg": t.yaw_deg, "tof_cm": t.z_cm, "h_cm": t.z_cm,
+                "flying": self.flying}
+
     async def takeoff(self) -> None:
         self._require()
         if self.flying:

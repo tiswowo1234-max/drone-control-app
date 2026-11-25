@@ -25,10 +25,10 @@ FLOOR_BGR = (sim_camera.FLOOR_GRAY,) * 3
 class MapScene:
     """지도 그림 피라미드 (흑백·컬러를 처음 쓸 때 한 번씩 읽는다)."""
 
-    def __init__(self, size_m: float, kind: str = "photos"):
+    def __init__(self, size_m: float, kind: str = "photos", extra: bool = False):
         if kind not in ("photos", "tags"):
             raise ValueError("synthetic map은 photos 또는 tags")
-        self.size_m, self.kind = size_m, kind
+        self.size_m, self.kind, self.extra = size_m, kind, extra  # extra: 슬롯 보드 태그가 그려진 그림
         self._levels: dict[bool, list[np.ndarray]] = {}
         self._lock = threading.Lock()
 
@@ -36,9 +36,10 @@ class MapScene:
         with self._lock:
             if color not in self._levels:
                 name = f"map_with_{self.kind}" + ("" if color else "_gray") + ".png"
-                img = read_image(teammate.MAPS_DIR / name, cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE)
+                path = teammate.map_file(name, self.extra)
+                img = read_image(path, cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE)
                 if img is None:
-                    raise FileNotFoundError(teammate.MAPS_DIR / name)
+                    raise FileNotFoundError(path)
                 levels = [img]
                 while min(levels[-1].shape[:2]) > 600:
                     levels.append(cv2.resize(levels[-1], None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA))

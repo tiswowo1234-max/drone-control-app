@@ -15,6 +15,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
+import numpy as np
+
 from ..models import BackendError, Pose, Telemetry
 from ..positioning import DroneFrame, PositionProvider, VisionProvider
 from ..settings import TelloCfg
@@ -105,6 +107,10 @@ class TelloBackend(DroneBackend):
         self._ka_pending = False
         self._ground_since: float | None = None
         self.self_landed = False  # TT가 스스로 착륙했다고 판단함 (컨트롤러가 읽고 지운다)
+        # 방향 보정 (카메라로 잰 드론 방향 - TT 방향 센서). TT 센서는 켤 때 방향이 0°라 지도 위쪽과 다를 수 있다
+        self._yaw_samples: list[float] = []
+        self._yaw_seen_at: float | None = None
+        self.heading_offset_deg: float | None = None
 
     # ------------------------------------------------------------ 연결·상태
     async def connect(self) -> None:
@@ -132,6 +138,8 @@ class TelloBackend(DroneBackend):
                 self._camera_mode(cmd, self.vision_mode)
             except Exception as e:  # noqa: BLE001
                 log.warning("카메라 모드(%s) 설정 실패: %s", self.vision_mode, e)
+        self._yaw_samples.clear()  # TT를 다시 켜면 방향 센서 0°가 바뀐다 → 보정값을 새로 모은다
+        self.heading_offset_deg, self._yaw_seen_at = None, None
         self._stop_poll.clear()
         self._poll_thread = threading.Thread(target=self._poll, name=f"{self.name}-poll", daemon=True)
         self._poll_thread.start()
@@ -140,7 +148,26 @@ class TelloBackend(DroneBackend):
         """추정 위치의 시작점: 기본은 home (드론을 home에 놓고 켠다는 가정)."""
         return self.home
 
+    def _altitude_from_tof(self, raw: dict) -> dict:
+        """[real] alt_source = "tof": 고도(h)를 거리 센서(tof, 기울기 보정) 값으로 바꾼다.
+
+        TT의 h는 '이륙 지점 기준' 추정값이라 실내에서 30cm까지 틀렸다(2026-11-23 시험: h 60cm, 실제·카메라·거리 센서 약 90cm).
+        tof는 바닥까지 직접 잰 거리다. 센서 하한(약 10cm) 근처·범위 밖이면 원래 h를 그대로 쓴다.
+        원래 h는 h_sensor로 남긴다(로그·연결 프로그램 전달용).
+        """
+        if self.cfg.alt_source != "tof" or "tof" not in raw:
+            return raw
+        tof = float(raw["tof"])
+        if not self.cfg.tof_min_cm <= tof <= self.cfg.tof_max_cm:
+            return raw
+        tilt = math.radians(max(abs(float(raw.get("pitch", 0.0))), abs(float(raw.get("roll", 0.0)))))
+        out = dict(raw)
+        out["h_sensor"] = raw.get("h")
+        out["h"] = tof * math.cos(tilt)
+        return out
+
     def _on_raw(self, raw: dict) -> None:
+        raw = self._altitude_from_tof(raw)
         self._raw = raw
         self._last_ok = time.monotonic()
         self.provider.update(raw)
@@ -148,6 +175,98 @@ class TelloBackend(DroneBackend):
             self._flying = bool(raw["flying"])
         else:
             self._check_ground(raw)
+        self._update_heading_offset()
+
+    def attitude(self) -> dict | None:
+        raw = self._raw
+        if self._cmd is None or not raw:
+            return None
+        out: dict = {"flying": self._flying}
+        for key, name in (("pitch", "pitch_deg"), ("roll", "roll_deg"), ("yaw", "yaw_deg"), ("tof", "tof_cm"), ("h", "h_cm")):
+            v = raw.get("h_sensor", raw.get("h")) if key == "h" else raw.get(key)  # h_cm = TT 원래 h
+            if isinstance(v, (int, float)):
+                out[name] = float(v)
+        return out
+
+    # ---------------------------------------------------------------- 방향 보정 (docs/api.md 7.3)
+    def _update_heading_offset(self) -> None:
+        """카메라가 잰 드론 방향(신뢰도 높은 값)과 TT 방향 센서의 차이를 모아 이동 방향 계산을 보정한다.
+
+        TT 방향 센서는 전원을 켤 때 방향을 0°로 삼는다. 서버는 '0° = 지도 위쪽'으로 가정하므로, 지도 위쪽을 보지 않고
+        켜면 이동 방향이 그만큼 틀어진다(2026-11-21 로그: 센서 -60°). 최근 표본의 원형 평균을 쓰고,
+        흔들림이 heading_max_spread_deg보다 크면 쓰지 않는다.
+        """
+        if not self.cfg.heading_from_vision or self.vision is None:
+            return
+        s = self.vision.yaw_sample()
+        if s is None or s[1] == self._yaw_seen_at or "yaw" not in self._raw:
+            return
+        yaw_v, at, conf = s
+        self._yaw_seen_at = at
+        if conf is not None and conf < self.cfg.heading_min_confidence:
+            return
+        sensor = self.frame.yaw_to_map(float(self._raw["yaw"]))
+        d = (yaw_v - sensor + 180.0) % 360.0 - 180.0
+        self._yaw_samples.append(d)
+        del self._yaw_samples[:-self.cfg.heading_samples]
+        if len(self._yaw_samples) < self.cfg.heading_min_samples:
+            return
+        a = np.radians(self._yaw_samples)
+        c, s_ = float(np.mean(np.cos(a))), float(np.mean(np.sin(a)))
+        mean = math.degrees(math.atan2(s_, c))
+        spread = math.degrees(math.sqrt(max(0.0, -2.0 * math.log(max(1e-9, math.hypot(c, s_))))))  # 원형 표준편차
+        if spread > self.cfg.heading_max_spread_deg:
+            return
+        old = self.heading_offset_deg
+        self.heading_offset_deg = mean
+        if old is None or abs((mean - old + 180) % 360 - 180) >= 3.0:
+            log.info("방향 보정: 이동 계산에 TT 방향 센서 %+.1f° (카메라 표본 %d개, 흔들림 %.1f°)",
+                     mean, len(self._yaw_samples), spread)
+
+    def heading_ready(self) -> bool | None:
+        if not self.cfg.heading_from_vision or self.vision is None:
+            return None
+        return self.heading_offset_deg is not None
+
+    async def _face_toward(self, cur: Pose, x_cm: float, y_cm: float) -> None:
+        """출동 방향 바라보기: 목표가 face_min_dist_cm 이상 남았고 기수가 face_min_deg 넘게 틀어져 있으면
+        제자리에서 cw/ccw로 돌려 목표를 바라보게 한다. 이후 구간은 주로 '전진'이 된다.
+
+        왜: TT의 go는 앞뒤·좌우 축마다 실제 이동량 오차가 달라, 대각선으로 보내면 경로가 비틀린다.
+        기수를 맞추면 한 축(전진)으로만 가서 오차 방향이 일정해지고, 카메라 보정도 그 축만 고치면 된다.
+        실제 드론(항등 좌표)에서만 쓴다 — 시뮬레이터는 좌우 반전 좌표라 회전 방향이 뒤집힌다."""
+        if not self.cfg.face_target or type(self.frame) is not DroneFrame:
+            return
+        dx, dy = x_cm - cur.x_cm, y_cm - cur.y_cm
+        dist = math.hypot(dx, dy)
+        if dist < self.cfg.face_min_dist_cm:
+            return
+        want = math.degrees(math.atan2(dx, dy))            # 지도 위쪽 0°, 시계 방향 +
+        have = self._move_yaw()                             # TT 센서 + 카메라 보정
+        turn = (want - have + 180.0) % 360.0 - 180.0
+        if abs(turn) < self.cfg.face_min_deg:
+            return
+        deg = max(1, min(360, int(round(abs(turn)))))
+        log.info("출동 방향 바라보기: 목표 방향 %.0f°, 현재 기수 %.0f° → %s %d°",
+                 want, have, "시계(cw)" if turn > 0 else "반시계(ccw)", deg)
+
+        def rotate():
+            if turn > 0:
+                self._cmd.rotate_clockwise(deg)
+            else:
+                self._cmd.rotate_counter_clockwise(deg)
+            self._refresh()
+        await self._call(rotate)
+        if self.cfg.face_settle_s > 0:
+            await asyncio.sleep(self.cfg.face_settle_s)
+        await self._call(self._refresh)
+
+    def _move_yaw(self) -> float:
+        """이동 계산에 쓰는 드론 방향 = TT 센서 yaw (+ 카메라로 구한 보정값)."""
+        yaw = float(self._raw.get("yaw", 0.0))
+        if self.heading_offset_deg is not None:
+            yaw += self.heading_offset_deg  # 보정값은 지도 기준 차이 — real(항등 좌표)에서만 켠다
+        return yaw
 
     def _check_ground(self, raw: dict) -> None:
         """실제 TT: 비행 중이라고 알고 있는데 높이(h)가 바닥이면 스스로 착륙한 것으로 본다.
@@ -157,7 +276,7 @@ class TelloBackend(DroneBackend):
         """
         lim = self.cfg.ground_h_cm
         h = raw.get("h", raw.get("tof"))
-        if lim <= 0 or not self._flying or h is None:
+        if lim <= 0 or not self._flying or h is None or self._in_flight:  # 명령(착륙 등) 진행 중에는 판단하지 않음
             self._ground_since = None
             return
         now = time.monotonic()
@@ -327,14 +446,16 @@ class TelloBackend(DroneBackend):
                 z_cm = z_cap
         wd = self.frame.map_to_drone(x_cm - cur.x_cm, y_cm - cur.y_cm, z_cm - cur.z_cm)
         max_steps = math.ceil(math.hypot(*wd) / max(self.cfg.segment_cm, 1)) + 10
-        log.info("move_to 목표 (%.1f, %.1f, %.1f) cm ← 현재 (%.1f, %.1f, %.1f) cm [%s], 드론 yaw %.0f°",
-                 x_cm, y_cm, z_cm, cur.x_cm, cur.y_cm, cur.z_cm, self.provider.source,
-                 float(self._raw.get("yaw", 0.0)))
+        log.info("move_to 목표 (%.1f, %.1f, %.1f) cm ← 현재 (%.1f, %.1f, %.1f) cm [%s], 드론 yaw %.0f° (센서 %.0f°%s)",
+                 x_cm, y_cm, z_cm, cur.x_cm, cur.y_cm, cur.z_cm, self.provider.source, self._move_yaw(),
+                 float(self._raw.get("yaw", 0.0)),
+                 "" if self.heading_offset_deg is None else f", 카메라 보정 {self.heading_offset_deg:+.1f}°")
         sent = 0
         for _ in range(max_steps):
             cur = self.provider.pose()
-            plan = plan_step(cur, x_cm, y_cm, z_cm, self.cfg.segment_cm, self.frame,
-                             float(self._raw.get("yaw", 0.0)))
+            await self._face_toward(cur, x_cm, y_cm)
+            cur = self.provider.pose()
+            plan = plan_step(cur, x_cm, y_cm, z_cm, self.cfg.segment_cm, self.frame, self._move_yaw())
             if plan is None:
                 if sent == 0:
                     log.info("move_to: 목표가 현재 위치에서 각 방향 %d cm 이내라 이동하지 않습니다", MIN_GO_CM)

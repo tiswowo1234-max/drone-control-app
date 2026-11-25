@@ -26,6 +26,15 @@ class DroneBackend(ABC):
         """시험용 참값 위치 (지도 cm, docs/api.md 12장). 모르면 None. has_truth = False면 쓰지 않는다."""
         return None
 
+    def heading_ready(self) -> bool | None:
+        """카메라로 방향 보정값이 정해졌는지 (초기 정렬 완료 조건). 보정을 쓰지 않는 백엔드는 None."""
+        return None
+
+    def attitude(self) -> dict | None:
+        """드론 자세·높이 센서 값 (연결 프로그램에 drone_state로 전달, docs/api.md 8장).
+        {"pitch_deg", "roll_deg", "yaw_deg", "tof_cm", "h_cm", "flying"} 중 아는 것만. 모르면 None."""
+        return None
+
     @abstractmethod
     async def connect(self) -> None:
         """드론/시뮬레이터에 연결. 실패하면 예외. (서버가 주기적으로 재시도한다)"""

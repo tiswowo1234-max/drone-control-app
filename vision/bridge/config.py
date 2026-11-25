@@ -66,9 +66,20 @@ class Settings:
     tt_width_px: int
     tt_height_px: int
     tt_crop_top_left: bool
+    tt_tag_roi: float
+    extra_tags: bool
+    tt_use_imu: bool
+    tt_pitch_sign: float
+    tt_roll_sign: float
+    tt_tof_check_cm: float
+    tt_tof_offset_cm: float
+    drone_state_max_age_s: float
     tt_mount_yaw_deg: float
     esp32_mount_yaw_deg: float
     video_forward_up: bool
+    tag_log: bool
+    tag_log_every_s: float
+    tilt_log_every_s: float
     tt_hfov_deg: float
     tt_camera_file: str
     photo_search_period_s: float
@@ -138,9 +149,20 @@ def load(path: Path | str = DEFAULT_SETTINGS) -> Settings:
         esp32_shadow_aware=bool(br.get("esp32_shadow_aware", False)),
         tt_video_url=str(br["tt_video_url"]), tt_width_px=int(br["tt_width_px"]), tt_height_px=int(br["tt_height_px"]),
         tt_crop_top_left=bool(br.get("tt_crop_top_left", True)),
+        tt_tag_roi=min(1.0, max(0.1, float(br.get("tt_tag_roi", 1.0)))),
+        extra_tags=bool(br.get("extra_tags", False)),
+        tt_use_imu=bool(br.get("tt_use_imu", True)),
+        tt_pitch_sign=float(br.get("tt_pitch_sign", 1.0)),
+        tt_roll_sign=float(br.get("tt_roll_sign", 1.0)),
+        tt_tof_check_cm=float(br.get("tt_tof_check_cm", 0.0)),
+        tt_tof_offset_cm=float(br.get("tt_tof_offset_cm", 0.0)),
+        drone_state_max_age_s=float(br.get("drone_state_max_age_s", 0.3)),
         tt_mount_yaw_deg=float(br.get("tt_mount_yaw_deg", 0.0)),
         esp32_mount_yaw_deg=float(br.get("esp32_mount_yaw_deg", 0.0)),
         video_forward_up=bool(br.get("video_forward_up", True)),
+        tag_log=bool(br.get("tag_log", False)),
+        tag_log_every_s=float(br.get("tag_log_every_s", 0.5)),
+        tilt_log_every_s=float(br.get("tilt_log_every_s", 1.0)),
         tt_hfov_deg=float(br["tt_hfov_deg"]), tt_camera_file=str(br.get("tt_camera_file", "")),
         photo_search_period_s=float(br["photo_search_period_s"]),
         slots=tuple(slots), source=path,

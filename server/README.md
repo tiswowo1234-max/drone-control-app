@@ -2,12 +2,13 @@
 
 - 명세: `docs/api.md` v0.7 · 설정: `config/settings.toml` (코드에 숫자를 직접 쓰지 않는다)
 - 구조: 앱 ⇄ (WebSocket `ws://<PC IP>:8000/ws`) ⇄ 이 서버 ⇄ 백엔드 `mock` | `sim` | `real`
+- 코드 내부 구조(명령·위치 흐름, 새 명령·통로 추가 방법, UGV 추종·시뮬레이터 통합 안내)는 [docs/dev-guide.md](../docs/dev-guide.md) 4·7~9장을 보세요.
 
 | 백엔드 | 무엇과 연결? | 언제 쓰나 |
 |---|---|---|
 | `mock` | 없음 (Python이 드론 흉내) | 앱 화면 개발·테스트. Unity 필요 없음 |
 | `sim` | Unity 시뮬레이터 `UnityProject.exe` (127.0.0.1:9911) | 비행 로직 검증 |
-| `real` | 실제 RoboMaster TT (djitellopy) | 실기체 (아직 미검증) |
+| `real` | 실제 RoboMaster TT (djitellopy) | 실기체 (2026-11-21부터 실물 시험 중: 연결·이착륙·이동·카메라 확인) |
 
 ---
 
@@ -196,6 +197,16 @@ v0.7 기능(고도 고정, 카메라 모드 전환과 real의 streamon/downvisio
 - **real 자체 착륙 감지:** 비행 중인데 TT 높이(`h`)가 `[real] ground_h_cm`(10cm) 이하로 `ground_s`(1초) 이어지면 스스로 착륙한 것으로 보고
   `mode = idle` + event `DRONE_LANDED_ITSELF`. 바닥에 있는데 TT가 `land`를 `error`로 거절하면 실패 대신 '이미 착지'로 처리한다.
 - **이동 기록:** `goto`마다 목표·현재 위치·위치 출처·구간을 로그에 남긴다. 목표가 20cm 이내라 움직이지 않으면 event `TARGET_TOO_CLOSE`.
+- **real 고도 = 거리 센서(`[real] alt_source = "tof"`):** TT `h`(이륙 지점 기준 추정)는 실내에서 30cm까지 틀렸다(2026-11-23). 바닥까지 직접 재는 `tof`(기울기 보정)를 고도로 쓰고, 15cm 미만(센서 하한)·400cm 초과면 `h`를 쓴다. 연결 프로그램에는 원래 `h`와 `tof`를 그대로 보낸다.
+- **real 방향 보정(`[real] heading_from_vision`):** 카메라가 잰 드론 방향(신뢰도 ≥ 0.6)과 TT 방향 센서의 차이를 모아 이동 방향 계산에 더한다.
+  TT를 지도 위쪽이 아닌 방향으로 켜도 바르게 이동한다. 표본 5개 이상·흔들림 10° 이하일 때만 쓰고, 로그에 `방향 보정: … %+.1f°`.
+- **초기 정렬(`[align]`, 2026-11-25):** 연결 후 첫 이륙(이륙 버튼·출동 모두) 때 가장 가까운 AprilTag(정문 기준 ID 37) 위로 가서
+  카메라 위치 5개(신뢰도 0.6 이상)와 real의 방향 보정값이 모이면 완료(`ALIGN_DONE`). 10초 안에 못 하면 `ALIGN_FAILED` 후 추정 위치로 계속,
+  태그가 80cm보다 멀거나 위치를 모르면 `ALIGN_SKIPPED`. 정렬 중 `mode`는 `taking_off`(그동안 goto는 `BUSY`). 드론이 다시 연결되면 다시 정렬한다.
+  태그 위치는 연결 프로그램과 같은 파일(`drone_server/tags.py`).
+- **real 출동 방향 바라보기(`[real] face_target`, 2026-11-25):** 이동 구간마다 남은 거리 30cm 이상·기수 차 10° 이상이면 `cw`/`ccw`로 목표를 바라본 뒤
+  주로 전진한다. 로그 `출동 방향 바라보기: … cw/ccw N°`. sim은 좌우 반전이라 쓰지 않는다.
+- **연결 프로그램에 자세 전달:** `ws /vision/video`로 0.1초마다 `drone_state`(pitch·roll·yaw·tof·h)를 보낸다(명세 8장).
 - **로그 파일:** 서버 창에 나오는 로그는 `server\logs\server-날짜.log`에도 저장된다(하루 한 파일, 실행마다 `===== 서버 시작` 구분선).
   실물 시험에서 문제가 생기면 이 파일을 보면 된다. git에는 올리지 않는다.
 - 출동(`takeoff`/`goto`)만 배터리 검사. `land`/`return_home`/`stop`은 배터리가 낮아도 받는다.
@@ -223,6 +234,9 @@ server/
     vision_link.py   위치 추적 모드(esp32/tt_down), 연결 프로그램 상태, 영상 중계(VideoRelay)
     incidents.py     사건 보고 검사·중복·메모리 보관
     positioning.py   위치 공급자(PositionProvider: 누적 추정·시뮬 참값·vision·미션패드), 좌표계 변환
+    tags.py          AprilTag 배치 읽기 (초기 정렬용, 연결 프로그램과 같은 파일)
+    models.py        Pose, Telemetry, BackendError
+    serve.py         실행 진입점·로그 파일
     backends/
       base.py        백엔드 인터페이스
       mock.py        가짜 드론
@@ -238,21 +252,20 @@ server/
   tests/
 ```
 
-## 7. 실제 드론(real) 연동 — 조원용
+## 7. 실제 드론(real) 연동
 
 ### 실행
 ```
 cd server
-.venv\Scripts\python.exe -m pip install djitellopy
-.venv\Scripts\python.exe run_server.py real
+.\run_server.bat real --vision
 ```
-- PC(또는 라즈베리파이)는 TT의 Wi-Fi에 연결돼야 한다. 앱은 같은 기기의 다른 네트워크 인터페이스로 접속해야 하므로
-  라즈베리파이는 Wi-Fi 2개(TT용 + 폰 핫스팟용) 또는 유선 구성이 필요하다.
-- 드론을 **home 위치에 지도 위쪽(+y)을 보도록** 놓고 켠다 (추정 위치의 시작점·방향 가정).
-- `[real] speed_cm_s`, `segment_cm`로 속도와 구간 길이를 조정한다.
-- **아직 실기체로 검증하지 않았다.** 처음에는 프로펠러 가드, 낮은 `max_alt_cm`, 짧은 거리로 시험할 것.
+- 보통은 루트의 `start_real_drone.bat`(서버 + 위치 인식 연결 프로그램)을 쓴다. `djitellopy`는 `requirements.txt`에 들어 있다.
+- 노트북은 TT의 Wi-Fi에 연결하고, 폰은 다른 네트워크 인터페이스(USB 테더링 또는 USB Wi-Fi 동글)로 노트북에 접속한다.
+- 드론을 **home 위치에 지도 위쪽(+y)을 보도록** 놓고 켠다 (추정 위치의 시작점·방향 가정. 카메라·초기 정렬로 보정).
+- `[real] speed_cm_s`(15), `segment_cm`(50)로 속도와 구간 길이를 조정한다.
+- 2026-11-21부터 실물로 시험 중이다(결과: `docs/progress.md`). 새 동작을 시험할 때는 프로펠러 가드, 낮은 `max_alt_cm`, 짧은 거리로 시작할 것.
 
-### 위치 공급자 끼워 넣기 (미션패드)
+### 위치 공급자 끼워 넣기 (참고: 미션패드 예시 — 현재 미션패드는 쓰지 않고 카메라 위치(vision)를 쓴다)
 서버는 위치를 `PositionProvider`(drone_server/positioning.py)에게만 묻는다. 새 방식은 이 클래스를 상속해 4개 메서드를 구현하면 된다.
 
 ```python
@@ -280,9 +293,9 @@ class PositionProvider(ABC):
   `backends/real.py`의 `make_position_provider()`에 한 줄 추가하면 된다.
 - 위치가 정확해지면 `tello.py`의 `move_to()`가 구간마다 위치를 다시 읽어 목표로 보정하므로(폐루프), 별도 수정 없이 정확도가 오른다.
 
-### 라즈베리파이로 옮길 때
-- 이 폴더를 그대로 복사하고 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt djitellopy`.
-- `run_server.bat` 대신 `.venv/bin/python run_server.py real`. Windows 전용 코드는 없다.
+### 다른 OS에서 실행할 때 (참고)
+- 서버는 노트북(Windows)에서 운영한다(라즈베리파이 이전 계획은 2026-11-21에 취소). 그래도 Windows 전용 코드는 없어서
+  macOS·Linux에서는 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` 뒤 `.venv/bin/python run_server.py real`로 실행할 수 있다.
 
 ## 8. 시뮬레이터 좌표 보정 (`[sim_calibration]`)
 - 시뮬레이터 장면의 건물 이름에 OSM ID가 들어 있어, 건물 75개를 OSM과 맞춰 정확히 구했다 (잔차 약 0.2m, 시뮬레이터 기준).

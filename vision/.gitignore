@@ -6,3 +6,4 @@ out/
 # 조원 펌웨어 Wi-Fi 비밀번호 (예시 파일만 저장소에 둔다)
 wifi_secrets.h
 .env
+logs/

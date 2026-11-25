@@ -5,6 +5,7 @@
 드론 아래를 보는 카메라 영상으로 **드론 위치를 알아내고**, 사건 사진 슬롯 위에 멈추면 **사진을 찍어 앱에 알립니다.**
 
 > 진척 상황·시험 결과·남은 일은 **[docs/progress.md](docs/progress.md)** 에 정리되어 있습니다.
+> **코드를 이어서 작업할 분**(UGV 추종 병합, 시뮬레이터 + 앱 통합 등)은 **[docs/dev-guide.md](docs/dev-guide.md)** 부터 읽어 주세요.
 
 ```
                        ┌───────────── 노트북 ──────────────────────────────────────┐
@@ -34,8 +35,11 @@
 | `server/` | 중계 서버 (FastAPI WebSocket, 안전 검사, mock/sim/real 백엔드) — [server/README.md](server/README.md) |
 | `vision/` | 위치 인식 연결 프로그램 + **조원 위치 인식 코드 복사본**(`vision/teammate/`) — [vision/README.md](vision/README.md) |
 | `config/settings.toml` | 조정 가능한 모든 값 (지도·이륙 지점·고도·제한·카메라 설정·사진 슬롯) |
-| `docs/api.md` | 앱 ⇄ 서버 ⇄ 연결 프로그램 메시지 명세 (v0.7) |
+| `docs/api.md` | 앱 ⇄ 서버 ⇄ 연결 프로그램 메시지 명세 (v0.7) — **기준 문서** |
+| `docs/dev-guide.md` | 개발자 가이드: 구조, 명령·위치 흐름, 확장 방법, UGV 추종·시뮬레이터 통합 안내 |
 | `docs/progress.md` | 진척 상황·시험 결과·남은 일 |
+| `docs/decisions.md` | 결정 사항과 실물 시험 기록 (날짜순) |
+| `CLAUDE.md` | Claude Code 세션용 프로젝트 안내 (현재 상태·작업 규칙) |
 | `map/` | 바닥 인쇄 지도 원본 (2.5m × 2.5m, EPS/PDF) |
 | `tools/` | 지도 이미지 변환·위경도 정합 스크립트 |
 | `start_real_drone.bat` / `start_demo_no_drone.bat` | **간편 실행 파일** (아래 「실행하기」) |
@@ -68,6 +72,14 @@ cd vision
 ### 앱
 - 안드로이드: 빌드한 APK를 설치 → 오른쪽 위 ⚙에 노트북 주소 입력(예: `192.168.0.10`).
 - PC 브라우저(개발용): `app/`에서 `flutter run -d edge`.
+
+## 다음 작업 (3단계)
+| 작업 | 담당 | 안내 |
+|---|---|---|
+| 드론이 지상 로봇(UGV)을 따라가는 코드 병합 | UGV 담당 조원 | [dev-guide 8장](docs/dev-guide.md#8-ugv-추종-병합-안내) |
+| 앱을 Unity 시뮬레이터와 통합 | 시뮬레이터 담당 조원 | [dev-guide 9장](docs/dev-guide.md#9-시뮬레이터--앱-통합-안내) |
+
+앱 ⇄ 서버 메시지를 바꾸면 `docs/api.md` 버전을 올리고, 서버·앱·테스트를 함께 고쳐 주세요.
 
 ## 조원 작업물
 - `vision/teammate/` 는 조원의 위치 인식 저장소(`drone-localization-main`)에서 필요한 부분을 **조원 동의를 받아** 복사한 것입니다.

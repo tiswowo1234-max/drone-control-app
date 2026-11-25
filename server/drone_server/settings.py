@@ -117,6 +117,33 @@ class TelloCfg:
     keepalive_s: float = 0.0    # real: 비행 중 이 시간 동안 명령이 없으면 'rc 0 0 0 0'을 보낸다(TT는 15초 무명령이면 스스로 착륙). 0이면 끔
     ground_h_cm: float = 0.0    # real: 비행 중인데 TT 높이(h)가 이 값 이하로 ground_s초 이어지면 '스스로 착륙'으로 본다. 0이면 끔
     ground_s: float = 1.0
+    alt_source: str = "h"       # real: 고도 = "h"(TT 이륙 기준 추정) / "tof"(거리 센서, 하한·범위 밖이면 h)
+    tof_min_cm: float = 15.0     # 이보다 작은 tof는 믿지 않음(센서 하한 약 10cm)
+    tof_max_cm: float = 400.0
+    heading_from_vision: bool = False   # real: 카메라로 잰 방향으로 TT 방향 센서를 보정해 이동 방향을 계산
+    heading_min_samples: int = 5        # 이만큼 모이면 보정 시작
+    heading_samples: int = 20           # 최근 표본 수 (원형 평균)
+    heading_max_spread_deg: float = 10.0  # 표본 흔들림(원형 표준편차)이 이보다 크면 보정값을 바꾸지 않음
+    heading_min_confidence: float = 0.6   # 이보다 신뢰도 낮은 카메라 값(추적 예측값 등)은 표본에서 뺌
+    # 출동 방향 바라보기 (2026-11-25): 이동 전에 목표 쪽으로 기수를 돌린 뒤 주로 '전진'으로 이동한다.
+    # 실제 드론(항등 좌표)에서만 동작한다 — 시뮬레이터는 좌우 반전 좌표라 쓰지 않는다.
+    face_target: bool = False
+    face_min_dist_cm: float = 30.0      # 남은 수평 거리가 이보다 짧으면 돌지 않는다
+    face_min_deg: float = 10.0          # 목표 방향과 기수 차이가 이보다 작으면 돌지 않는다
+    face_settle_s: float = 0.5          # 회전 뒤 센서·카메라가 안정될 때까지 기다리는 시간
+
+
+@dataclass(frozen=True)
+class AlignCfg:
+    """초기 정렬 (2026-11-25): 연결 후 첫 이륙 때 가장 가까운 AprilTag 위로 가서 위치·방향을 확정한다."""
+    enabled: bool = False
+    tags_file: str = ""           # 비우면 vision 연결 프로그램과 같은 태그 지도(조원 원본, [bridge] extra_tags면 확장판)
+    max_tag_dist_cm: float = 80.0  # 가장 가까운 태그가 이보다 멀면 정렬하지 않는다
+    wait_fix_s: float = 3.0       # 이륙 후 첫 카메라 위치를 기다리는 시간 (없으면 추정 위치로 태그를 고른다)
+    min_fixes: int = 5            # 태그 위에서 이만큼 카메라 위치를 받아야 정렬 완료
+    min_confidence: float = 0.6   # 이보다 신뢰도가 낮은 카메라 위치(추적 예측값 등)는 세지 않는다
+    require_heading: bool = True  # real: 방향 보정값(heading_from_vision)이 정해져야 완료
+    timeout_s: float = 10.0       # 태그 위에서 이 시간 안에 완료하지 못하면 실패로 알리고 계속한다
 
 
 @dataclass(frozen=True)
@@ -193,6 +220,7 @@ class Settings:
     video: VideoCfg = field(default_factory=VideoCfg)
     incident: IncidentCfg = field(default_factory=IncidentCfg)
     bridge: BridgeCfg = field(default_factory=BridgeCfg)
+    align: AlignCfg = field(default_factory=AlignCfg)
     photo_slots: list[PhotoSlot] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -256,7 +284,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         NoFlyZone(name=str(z.get("name", "")), polygon_cm=[(float(p[0]), float(p[1])) for p in z["polygon_cm"]])
         for z in raw.get("no_fly_zones", [])
     ]
-    real_defaults = TelloCfg(go_axes="sdk", keepalive_s=5.0, ground_h_cm=10.0, ground_s=1.0)
+    real_defaults = TelloCfg(go_axes="sdk", keepalive_s=5.0, ground_h_cm=10.0, ground_s=1.0, heading_from_vision=True,
+                             alt_source="tof", face_target=True)
     sim_defaults = TelloCfg(go_axes="sim")
     s = Settings(
         map_width_cm=float(raw["map"]["width_cm"]),
@@ -276,6 +305,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         video=_sub(VideoCfg, raw.get("video")),
         incident=_sub(IncidentCfg, raw.get("incident")),
         bridge=_sub(BridgeCfg, raw.get("bridge")),
+        align=_sub(AlignCfg, raw.get("align")),
         photo_slots=_photo_slots(raw.get("photo_slots", [])),
         raw=raw,
     )

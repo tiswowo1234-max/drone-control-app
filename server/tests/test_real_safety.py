@@ -179,3 +179,39 @@ def test_goto_too_close_tells_app(settings):
         assert any(e.get("code") == "TARGET_TOO_CLOSE" for e in events)
         await b.close()
     asyncio.run(go())
+
+
+def test_altitude_uses_tof_not_h():
+    """2026-11-23 시험: TT h 60cm인데 실제(거리 센서) 약 90cm → 고도는 거리 센서로, 50cm까지 40cm 내려야 한다."""
+    class AltT(FakeRealTello):
+        def get_current_state(self):
+            return {"bat": 90, "h": self.h, "yaw": 0, "tof": self.tof, "pitch": 0, "roll": 0}
+
+        def takeoff(self):
+            self.calls.append("takeoff")
+            self.h, self.tof = 60.0, 90.0
+
+    async def go():
+        t = AltT()
+        t.tof = 10.0
+        b = make(t, alt_source="tof", keepalive_s=0.0)
+        await b.connect()
+        assert b.telemetry().pos.z_cm == 0.0           # 바닥(tof 10 = 센서 하한) → h 그대로
+        await b.takeoff()
+        assert b.telemetry().pos.z_cm == 90.0          # 거리 센서 값
+        assert b.attitude()["h_cm"] == 60.0 and b.attitude()["tof_cm"] == 90.0  # 전달은 원래 값
+        await b.move_to(153.2, 70.2, 50.0)
+        assert t.calls[-1] == ("go", 0, 0, -40)
+        await b.close()
+    asyncio.run(go())
+
+
+def test_altitude_h_mode_unchanged():
+    async def go():
+        t = FakeRealTello()
+        b = make(t, alt_source="h")
+        await b.connect()
+        await b.takeoff()
+        assert b.telemetry().pos.z_cm == 80.0  # FakeRealTello: h 80, tof = h + 10 이지만 h 사용
+        await b.close()
+    asyncio.run(go())

@@ -119,6 +119,10 @@
 | `BAD_REQUEST` | 앱이 보낸 메시지가 JSON 형식이 아님 |
 | `DRONE_LANDED_ITSELF` | (v0.7) 실제 TT가 스스로 착륙함(배터리 부족·명령 끊김·충돌 등). 서버가 TT 높이로 감지해 `mode`를 `idle`로 바꾼다 |
 | `TARGET_TOO_CLOSE` | (v0.7) 출동 목표가 현재 위치에서 20cm 이내라 움직이지 않음(TT 최소 이동 거리) |
+| `ALIGN_START` | (2026-11-25) 초기 정렬 시작: 태그 ID n 위로 이동 |
+| `ALIGN_DONE` | (2026-11-25) 초기 정렬 완료: 위치·방향 보정값 |
+| `ALIGN_FAILED` | (2026-11-25, warn) 태그 위에서 제한 시간 안에 카메라 위치(또는 방향 보정)가 모이지 않음 — 추정 위치로 계속 비행 |
+| `ALIGN_SKIPPED` | (2026-11-25, warn) 현재 위치를 모르거나 가장 가까운 태그가 너무 멀어 정렬을 건너뜀 |
 | `INCIDENT_NEW` | 새 사건 사진이 보고됨 (3.5의 `incident` 메시지와 함께 보낸다. 앱은 `incident`를 처리하면 이 event는 무시해도 된다) |
 
 ### 3.5 `incident` — 새 사건 보고 (v0.7)
@@ -177,7 +181,7 @@
 ```
 | cmd | 추가 필드 | 설명 |
 |---|---|---|
-| `takeoff` | — | 이륙 후 `default_alt_cm`에서 호버링 |
+| `takeoff` | — | 이륙 후 `default_alt_cm`에서 호버링. (2026-11-25) `[align] enabled`이고 카메라 위치(vision)가 있으면, 연결 후 첫 이륙 때 **초기 정렬**(가장 가까운 AprilTag 위로 가서 위치·방향 확정)을 먼저 한다. 그동안 `mode`는 `taking_off` |
 | `goto` | `x_cm`, `y_cm`, (`z_cm` 생략 시: `[limits] fixed_alt = true`이면 `default_alt_cm`(v0.7, 시연 전 고도 고정 — `return_home`의 이동 고도도 같음), false면 현재 고도를 `min_alt_cm`~`max_alt_cm`로 맞춘 값) | 목표 지점으로 이동. 착지 상태이면 이륙부터 한다 |
 | `stop` | — | 그 자리에서 호버링 |
 | `land` | — | 그 자리에 착륙 |
@@ -257,6 +261,9 @@
 - 마지막 값을 **서버가 받은 시각** 기준으로 `[vision] stale_s`초(기본 1.0) 이내면 `state.pos_source = "vision"`, 그 위치를 쓴다.
 - 그보다 오래되면 마지막 추정 위치에서부터 **명령 누적 추정**으로 이어 가고 `pos_source = "estimate"`가 된다.
 - 지도 밖 좌표(여유 `[vision] margin_m` 포함)는 `OUT_OF_BOUNDS`로 거부한다.
+- **방향 보정 (real, 2026-11-23, `[real] heading_from_vision`):** `confidence` ≥ `heading_min_confidence`인 값의 `yaw_deg`와 TT 방향 센서의 차이를
+  모아(최근 `heading_samples`개, 흔들림 ≤ `heading_max_spread_deg`) 이동 방향 계산에 더한다. TT를 지도 위쪽이 아닌 방향으로 켜도 바르게 이동한다.
+  TT를 다시 연결하면 새로 모은다. 보정값은 서버 로그의 `방향 보정:`과 `move_to ... (센서 …, 카메라 보정 …)`에 나온다.
 - 상태 확인: 브라우저로 `http://<서버 IP>:8000/`을 열면 `vision.last_age_s`(마지막 값을 받은 뒤 지난 초)가 보인다.
 - 시험용 가짜 송신 스크립트: `server/tools/fake_vision.py` (사용법은 `server/README.md`)
 - 조원용 전체 설명서: `docs/teammate/interface.md`
@@ -271,6 +278,10 @@
     권장: 가로 `[video] send_width_px` 이하, 초당 `[video] send_fps`장 이하. 한 장 최대 `[video] max_frame_kb` KB(넘으면 서버가 버림).
   - 텍스트 메시지 `{"type": "bridge_status", "mode": "tt_down", "camera_ok": true, "message": "TT 하단 카메라 수신 중"}` —
     연결 직후, 모드를 바꾼 뒤, 카메라 상태가 바뀔 때 보낸다. `mode`는 연결 프로그램이 **실제로 쓰고 있는** 모드다.
+- **서버 → 연결 프로그램 (자세·높이, 2026-11-23):** 텍스트 메시지 약 0.1초마다
+  `{"type": "drone_state", "t": 1763000000.1, "pitch_deg": 1.0, "roll_deg": -2.0, "yaw_deg": 35.0, "tof_cm": 52.0, "h_cm": 50.0, "flying": true}`
+  (아는 값만). 연결 프로그램은 TT 모드 위치 계산에 기울기(중력 방향)를 넣고, 카메라 높이가 `tof_cm`와 `[bridge] tt_tof_check_cm` 넘게 다르면 그 위치를 버린다.
+  `[bridge] drone_state_max_age_s`보다 오래된 값은 쓰지 않는다. mock은 기울기 0·거리 센서 = 참값 높이.
 - **서버 → 연결 프로그램:** 텍스트 메시지 `{"type": "vision_mode", "mode": "tt_down"}` — 연결 직후 1회, 그리고 앱이 모드를 바꿀 때(11장).
   연결 프로그램은 받으면 입력 카메라와 위치 계산 방식을 바꾸고 `bridge_status`로 답한다.
 - 연결 프로그램은 하나만 둔다. 새 연결이 오면 서버는 이전 연결을 닫는다.
@@ -388,4 +399,4 @@ Unity 시뮬레이터는 바닥에 인쇄 지도·AprilTag가 없는 3D 캠퍼�
 | 0.4 | 2026-11-11 | 7장 추가: 카메라 위치 추정 입력 `POST /vision/pose` (m 단위, 지도 왼쪽 아래 원점). `pos_source`에 `vision` 추가 |
 | 0.5 | 2026-11-11 | 구현에 맞춰 명시: 실패 응답 `message`, vision 꺼짐·confidence 범위 → `BAD_REQUEST`, `ts`는 순서 확인용(오래되면 무시), stale 판정은 서버 수신 시각, vision `yaw_deg`는 표시용, 권장 빈도 2Hz 이상, `/` 상태의 `vision.last_age_s`, event `BAD_REQUEST`, 이륙 중 `return_home` BUSY, 귀환 중 goto 교체, `z_cm` 생략 시 고도 클램프, 도착 오차 약 20cm, `api_version` = 명세 버전 |
 | 0.6 | 2026-11-11 | 명령권 넘겨받기: 명령권 앱이 끊기면 남은 앱 중 가장 최근 연결 앱이 이어받음. 자동 착륙은 남은 앱이 없을 때(또는 명령권 앱의 ping이 끊길 때) |
-| 0.7 | 2026-11-21 | 2단계 병합: `/vision/pose`에 `z_m`(표시용) 추가, 조원 yaw 기준 변환 명시. 사건 보고 `POST /vision/incident`(9장), 앱 메시지 `incident`·`incidents`(3.5·3.6), event `INCIDENT_NEW`, 사건 사진 `GET /incidents/{id}/photo.jpg`. 실시간 영상: 입력 `ws /vision/video`(8장), 앱 `ws /ws/video`(10.2). AI 판별은 꺼 둠(`detection: null`). 위치 추적 모드 `esp32`(XIAO 컬러)/`tt_down`(TT 하단 흑백 320×240) 전환: `cmd set_vision_mode`, `state.vision`, `config.vision_modes`, 서버↔연결 프로그램 `vision_mode`/`bridge_status`, `WRONG_MODE`(11장). 사건 보고 기본 = 슬롯 촬영(`config.photo_slots`, 9장). 시험용 합성 카메라와 `GET /sim/truth`(12장). 구현 후 보완: 모듈별 yaw 기준, 슬롯 촬영은 측정 자세만, 서버 사건 검사·위경도 채움·모드별 중복 판정, 영상 앱 5초 정지 시 끊음, 사진 404 `NOT_FOUND`, 비상정지 후 바닥에서도 모드 전환, 카메라 명령 실패는 `CMD_FAILED`, 앱 사건 키 `id@ts` |
+| 0.7 | 2026-11-21 | (2026-11-25 추가, 메시지 형식 변화 없음: 초기 정렬 event `ALIGN_START`·`ALIGN_DONE`·`ALIGN_FAILED`·`ALIGN_SKIPPED`, 정렬 중 `taking_off`. real은 이동 전 목표 쪽으로 기수를 돌림 — 서버 내부 동작) 2단계 병합: `/vision/pose`에 `z_m`(표시용) 추가, 조원 yaw 기준 변환 명시. 사건 보고 `POST /vision/incident`(9장), 앱 메시지 `incident`·`incidents`(3.5·3.6), event `INCIDENT_NEW`, 사건 사진 `GET /incidents/{id}/photo.jpg`. 실시간 영상: 입력 `ws /vision/video`(8장), 앱 `ws /ws/video`(10.2). AI 판별은 꺼 둠(`detection: null`). 위치 추적 모드 `esp32`(XIAO 컬러)/`tt_down`(TT 하단 흑백 320×240) 전환: `cmd set_vision_mode`, `state.vision`, `config.vision_modes`, 서버↔연결 프로그램 `vision_mode`/`bridge_status`, `WRONG_MODE`(11장). 사건 보고 기본 = 슬롯 촬영(`config.photo_slots`, 9장). 시험용 합성 카메라와 `GET /sim/truth`(12장). 구현 후 보완: 모듈별 yaw 기준, 슬롯 촬영은 측정 자세만, 서버 사건 검사·위경도 채움·모드별 중복 판정, 영상 앱 5초 정지 시 끊음, 사진 404 `NOT_FOUND`, 비상정지 후 바닥에서도 모드 전환, 카메라 명령 실패는 `CMD_FAILED`, 앱 사건 키 `id@ts` |

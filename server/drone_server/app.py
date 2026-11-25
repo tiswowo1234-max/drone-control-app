@@ -214,7 +214,7 @@ def create_app(settings: Settings, backend: DroneBackend) -> FastAPI:
         if conf is not None and conf < settings.vision.min_confidence:
             return vision_error("LOW_CONFIDENCE", f"confidence {conf:g} < {settings.vision.min_confidence:g}")
         backend.vision.submit(x_m * 100.0, y_m * 100.0, yaw, ts,
-                              None if z_m is None else z_m * 100.0)  # m → cm
+                              None if z_m is None else z_m * 100.0, confidence=conf)  # m → cm
         return {"ok": True}
 
     @app.post("/vision/incident")

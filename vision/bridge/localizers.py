@@ -18,7 +18,7 @@ import numpy as np
 
 from . import teammate
 from .config import Settings
-from .geometry import CameraView, nadir_view, yaw_from_ccw, yaw_from_compass
+from .geometry import CameraView, gravity_in_camera, nadir_view, yaw_from_ccw, yaw_from_compass
 
 log = logging.getLogger("bridge.localizers")
 
@@ -35,8 +35,21 @@ class PoseResult:
     measured: bool = False         # 이 장에서 실제로 측정했는지 (아니면 예측값)
     view: CameraView | None = None  # 슬롯 투영용: 이 장이 지도 어디를 보는지
     tags: list | None = None        # 이 장에서 본 AprilTag (photo_finder용)
+    tag_seen: list | None = None    # 이 장에서 읽은 태그 [(id, 한 변 px)] — 창 출력(태그 인식 시험)용, 두 모드 공통
+    tag_ignored: list | None = None  # 읽었지만 가운데 영역 밖이라 위치 계산에서 뺀 태그 id (tt_tag_roi)
+    imu_used: bool = False          # 드론 기울기(중력 방향)를 위치 계산에 썼는지
+    height_reject: tuple | None = None  # (카메라 높이 cm, 거리 센서 높이 cm) — 서로 달라 이 장의 위치를 버림
     quads: list | None = None
     ms: float = 0.0
+
+
+def _tag_sizes(items) -> list:
+    """[(id, 네 모서리 px)] → [(id, 한 변 평균 px)] (id 순)."""
+    out = []
+    for tid, corners in items:
+        c = np.asarray(corners, float).reshape(4, 2)
+        out.append((int(tid), float(np.mean([np.linalg.norm(c[k] - c[k - 1]) for k in range(4)]))))
+    return sorted(out)
 
 
 def _conf_from_std(std_m: float, scale_m: float = 0.1) -> float:
@@ -71,7 +84,7 @@ class TtDownLocalizer:
             self.camera_note = f"시야각 추정 {settings.tt_hfov_deg:g}°"
         self._base = base
         self._CameraModel, self._Localizer, self._PoseTracker = CameraModel, Localizer, PoseTracker
-        self.cfg = LocalizerConfig(tags_file=teammate.MAPS_DIR / "apriltag_map.json",
+        self.cfg = LocalizerConfig(tags_file=teammate.map_file("apriltag_map.json", settings.extra_tags),
                                    slots_file=teammate.MAPS_DIR / "slots.json")
         self.tag_map = TagMap.load(self.cfg.tags_file)
         self._loc_by_size: dict[tuple[int, int], object] = {}
@@ -79,6 +92,24 @@ class TtDownLocalizer:
 
     def reset(self) -> None:
         self.tracker = self._PoseTracker()
+
+    def _in_roi(self, tags, w: int, h: int):
+        """[bridge] tt_tag_roi: 태그 중심이 화면 가운데 영역(가로·세로 각각 이 비율)에 있는 태그만 위치 계산에 쓴다.
+
+        0.5 = 가운데 1/4 넓이. 보정 안 된 렌즈는 가장자리 왜곡이 커서 가장자리 태그가 위치를 크게 틀리게 하거나
+        태그 반대편으로 뒤집는다(2026-11-23 실물 S4 출동 시험). 태그는 화면 전체에서 찾고(잘린 태그 방지)
+        고르기만 하므로 카메라 모델은 그대로다. 1.0이면 전체 사용.
+        """
+        f = self.s.tt_tag_roi
+        if f >= 1.0:
+            return list(tags), []
+        x0, x1 = w * (1 - f) / 2, w * (1 + f) / 2
+        y0, y1 = h * (1 - f) / 2, h * (1 + f) / 2
+        used, ignored = [], []
+        for tg in tags:
+            cx, cy = np.asarray(tg.corners, float).reshape(4, 2).mean(axis=0)
+            (used if x0 <= cx <= x1 and y0 <= cy <= y1 else ignored).append(tg)
+        return used, ignored
 
     def _localizer(self, w: int, h: int):
         """(w,h) = 원본 화면 크기. upscale이면 확대한 화면용 카메라 모델."""
@@ -94,7 +125,27 @@ class TtDownLocalizer:
             self._loc_by_size[key] = (self._Localizer(cam, self.tag_map, self.cfg), cam)
         return self._loc_by_size[key]
 
-    def process(self, image: np.ndarray, t: float) -> PoseResult:
+    def _gravity(self, drone: dict | None):
+        """드론 기울기 → 카메라 좌표 중력 방향 ([bridge] tt_use_imu). 없으면 None(조원 기본: 수직 ±5° 가정)."""
+        if not self.s.tt_use_imu or not drone or "pitch_deg" not in drone or "roll_deg" not in drone:
+            return None
+        return gravity_in_camera(self.s.tt_pitch_sign * drone["pitch_deg"], self.s.tt_roll_sign * drone["roll_deg"],
+                                 self.s.tt_mount_yaw_deg)
+
+    def _height_ok(self, pose, drone: dict | None):
+        """카메라로 계산한 높이와 TT 거리 센서 높이 비교 ([bridge] tt_tof_check_cm). 다르면 (카메라, 센서) cm."""
+        tol = self.s.tt_tof_check_cm
+        if tol <= 0 or pose is None or not drone or "tof_cm" not in drone:
+            return None
+        tof = float(drone["tof_cm"])
+        if not 15.0 <= tof <= 400.0:  # 바닥 가까이·측정 범위 밖은 믿지 않음
+            return None
+        tilt = math.radians(max(abs(drone.get("pitch_deg", 0.0)), abs(drone.get("roll_deg", 0.0))))
+        sensor_h = tof * math.cos(tilt) + self.s.tt_tof_offset_cm
+        cam_h = float(pose.position[2]) * 100.0
+        return None if abs(cam_h - sensor_h) <= tol else (round(cam_h), round(sensor_h))
+
+    def process(self, image: np.ndarray, t: float, drone: dict | None = None) -> PoseResult:
         t0 = time.perf_counter()
         gray = to_gray(image)
         h, w = gray.shape
@@ -102,14 +153,22 @@ class TtDownLocalizer:
         g = cv2.resize(gray, None, fx=self.upscale, fy=self.upscale, interpolation=cv2.INTER_CUBIC) \
             if self.upscale > 1 else gray
         tags, quads = loc.detect_all(g)
-        pose = loc.solve(tags, self.tracker.position)
+        used, ignored = self._in_roi(tags, g.shape[1], g.shape[0])
+        gravity = self._gravity(drone)
+        pose = loc.solve(used, self.tracker.position, gravity)
+        bad_height = self._height_ok(pose, drone)
+        if bad_height is not None:
+            pose = None  # 높이가 틀린 위치는 버리고 추적기는 예측으로 이어 간다
         tracked = self.tracker.update(t, pose)
         if self.upscale > 1:  # 원본 화면 좌표로 되돌림 (슬롯·사진 찾기용)
             u = self.upscale
             for tg in tags:
                 tg.corners = (tg.corners + 0.5) / u - 0.5
             quads = [(q + 0.5) / u - 0.5 for q in quads]
-        res = PoseResult(False, tags=tags, quads=quads)
+        res = PoseResult(False, tags=tags, quads=quads,
+                         tag_seen=_tag_sizes((tg.id, tg.corners) for tg in used if tg.id in loc.tag_map.corners),
+                         tag_ignored=sorted(tg.id for tg in ignored if tg.id in loc.tag_map.corners),
+                         imu_used=gravity is not None, height_reject=bad_height)
         if tracked is None or tracked.status == "lost":
             res.status = "위치 없음 (보이는 태그 없음)" if pose is None else "추적 재시작"
             res.ms = (time.perf_counter() - t0) * 1000
@@ -180,7 +239,8 @@ class Esp32Localizer:
         method = settings.esp32_illumination
         self.lighting = (LightingProcessor(IlluminationConfig(method), shadow_aware=settings.esp32_shadow_aware)
                          if method != "none" or settings.esp32_shadow_aware else None)
-        self.tag_localizer = (AprilTagLocalizer(TagMap.load(campus), 1.0, AprilTagConfig())
+        self.tag_localizer = (AprilTagLocalizer(TagMap.load(campus, teammate.map_file("apriltag_map.json", settings.extra_tags)),
+                                                1.0, AprilTagConfig())
                               if mode != "map" else None)  # 1.0 = 인쇄 지도 폭 2.5 m / 지도 2.5 m
         self.live = None
         self.frame_id = 0
@@ -194,7 +254,7 @@ class Esp32Localizer:
                                      tag_localizer=self.tag_localizer, lighting=self.lighting)
         self.last_t = None
 
-    def process(self, image: np.ndarray, t: float) -> PoseResult:
+    def process(self, image: np.ndarray, t: float, drone: dict | None = None) -> PoseResult:
         from localization.camera_interface import CameraFrame
         t0 = time.perf_counter()
         bgr = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -204,7 +264,8 @@ class Esp32Localizer:
         self.frame_id += 1
         r = self.live.process(CameraFrame(bgr, t, self.frame_id, "bridge", received_at=time.perf_counter()))
         tr = r.tracking
-        res = PoseResult(False, tags=None)
+        res = PoseResult(False, tags=None,
+                         tag_seen=_tag_sizes((d.tag_id, d.corners_px) for d in (r.tag_detections or ())))
         res.ms = (time.perf_counter() - t0) * 1000
         if tr is None or tr.xy_m is None or tr.yaw_deg is None or tr.state.value not in self.SENDABLE:
             res.status = (tr.state.value if tr else "위치 없음") + (f" ({tr.reason})" if tr and tr.reason else "")

@@ -208,6 +208,7 @@ class VisionLink:
             self._spawn(self._close_quietly(old))
         log.info("vision bridge connected")
         await self._notify_bridge(ws)
+        sender = asyncio.create_task(self._drone_state_loop(ws))
         try:
             while True:
                 msg = await ws.receive()
@@ -221,11 +222,27 @@ class VisionLink:
                 if text is not None and ws is self.bridge:
                     self._on_bridge_text(text)
         finally:
+            sender.cancel()
             if self.bridge is ws:
                 self.bridge = None
                 self.bridge_mode = self.camera_ok = None
                 self.bridge_message = "연결 프로그램 연결 끊김"
                 log.info("vision bridge disconnected")
+
+    async def _drone_state_loop(self, ws: Any, period_s: float = 0.1) -> None:
+        """드론 자세·높이를 연결 프로그램에 보낸다 (docs/api.md 8장 drone_state).
+        위치 계산이 기울기(중력 방향)와 거리 센서 높이를 쓴다. 느리면 건너뛴다(보내기 0.5초 제한)."""
+        while True:
+            att = self.b.attitude()
+            if att is not None:
+                msg = {"type": "drone_state", "t": round(time.time(), 3), **att}
+                try:
+                    await asyncio.wait_for(ws.send_text(json.dumps(msg)), 0.5)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — 끊긴 연결은 수신 루프에서 정리
+                    return
+            await asyncio.sleep(period_s)
 
     def _on_bridge_text(self, text: str) -> None:
         try:

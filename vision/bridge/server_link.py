@@ -137,9 +137,11 @@ class HttpSender:
 class VideoLink:
     """ws /vision/video. on_mode(mode) 콜백. send_jpeg(bytes), send_status(dict)."""
 
-    def __init__(self, server_url: str, on_mode, status_fn, dry_run: bool = False, retry_s: float = 2.0):
+    def __init__(self, server_url: str, on_mode, status_fn, dry_run: bool = False, retry_s: float = 2.0,
+                 on_drone_state=None):
         self.url = ws_url(server_url, "/vision/video")
         self.on_mode, self.status_fn, self.dry, self.retry_s = on_mode, status_fn, dry_run, retry_s
+        self.on_drone_state = on_drone_state  # 서버가 0.1초마다 보내는 드론 자세·높이 (8장 drone_state)
         self._ws = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -215,6 +217,9 @@ class VideoLink:
             return
         if isinstance(msg, dict) and msg.get("type") == "vision_mode":
             self.on_mode(msg.get("mode"))
+        elif isinstance(msg, dict) and msg.get("type") == "drone_state":
+            if self.on_drone_state is not None:
+                self.on_drone_state(msg)
         else:
             log.debug("서버 메시지 무시: %s", msg)
 

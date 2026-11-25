@@ -56,7 +56,7 @@ echo  앱(휴대폰)의 톱니바퀴(⚙)에 아래 주소 중 휴대폰과 같�
 powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | ForEach-Object { '   ' + $_.IPAddress + '   (' + $_.InterfaceAlias + ')' }"
 echo  PC 브라우저로 상태 보기: http://127.0.0.1:8000/
 echo  끌 때: 열린 두 창에서 각각 Ctrl+C (드론은 먼저 착륙시키기)
-echo  서버 로그 파일: server\logs\server-날짜.log
+echo  로그 파일: server\logs\server-날짜.log , vision\logs\bridge-날짜.log
 echo ============================================================
 echo.
 pause

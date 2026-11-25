@@ -56,9 +56,19 @@ def vision_settings(settings, **kw):
 
 
 # ================================================================ 설정
+
+def recv_bridge(ws):
+    """연결 프로그램 쪽 수신: 주기적인 drone_state(자세·높이)는 건너뛰고 다음 메시지."""
+    while True:
+        m = json.loads(ws.receive_text())
+        if m.get("type") != "drone_state":
+            return m
+
+
 def test_settings_toml_v07_keys():
     s = load_settings()
-    assert s.limits.fixed_alt is True and s.limits.default_alt_cm == 80
+    assert s.limits.fixed_alt is True  # 고도 값 자체는 시연 결과로 바뀌므로(80 → 40, 2026-11-23) 범위만 검사
+    assert s.limits.min_alt_cm <= s.limits.default_alt_cm <= s.limits.max_alt_cm
     assert s.bridge.default_mode in ("esp32", "tt_down")
     assert [p.slot for p in s.photo_slots] == [1, 2, 3, 4]
     j = s.photo_slots[0].to_json()
@@ -163,7 +173,7 @@ def test_pose_mode_check_and_z_display(settings):
 def test_mode_switch_over_ws_notifies_bridge_and_state(settings):
     with TestClient(create_app(settings, MockBackend(settings))) as client:
         with client.websocket_connect("/vision/video") as bridge, client.websocket_connect("/ws") as ws:
-            assert json.loads(bridge.receive_text()) == {"type": "vision_mode", "mode": "tt_down"}
+            assert recv_bridge(bridge) == {"type": "vision_mode", "mode": "tt_down"}
             bridge.send_text(json.dumps({"type": "bridge_status", "mode": "tt_down", "camera_ok": True,
                                          "message": "TT 하단 카메라 수신 중"}))
             st = recv_until(ws, "state")
@@ -175,7 +185,7 @@ def test_mode_switch_over_ws_notifies_bridge_and_state(settings):
                                     "camera_ok": True, "video_live": False}
             ws.send_json(cmd("m1", "set_vision_mode", mode="esp32"))
             assert recv_until(ws, "ack") == {"type": "ack", "id": "m1", "ok": True}
-            assert json.loads(bridge.receive_text()) == {"type": "vision_mode", "mode": "esp32"}
+            assert recv_bridge(bridge) == {"type": "vision_mode", "mode": "esp32"}
             st = recv_until(ws, "state")
             assert st["vision"]["mode"] == "esp32" and st["vision"]["bridge_mode"] == "tt_down"  # 전환 중
             bridge.send_text(json.dumps({"type": "bridge_status", "mode": "esp32", "camera_ok": False}))
@@ -456,8 +466,10 @@ def test_second_bridge_replaces_first(settings):
             b1.receive_text()
             b1.send_text(json.dumps({"type": "bridge_status", "mode": "tt_down", "camera_ok": True}))
             with client.websocket_connect("/vision/video") as b2:
-                assert json.loads(b2.receive_text())["type"] == "vision_mode"
-                msg = b1.receive()     # 이전 연결은 서버가 닫는다
+                assert recv_bridge(b2)["type"] == "vision_mode"
+                msg = b1.receive()     # 이전 연결은 서버가 닫는다 (그 전에 온 drone_state는 건너뜀)
+                while msg["type"] == "websocket.send" and '"drone_state"' in (msg.get("text") or ""):
+                    msg = b1.receive()
                 assert msg["type"] == "websocket.close"
                 assert link.bridge is not None and link.bridge_mode is None
                 b2.send_text(json.dumps({"type": "bridge_status", "mode": "tt_down", "camera_ok": True}))
@@ -667,3 +679,68 @@ def test_default_mode_from_settings(settings, mode):
     s = replace(settings, bridge=replace(settings.bridge, default_mode=mode))
     with TestClient(create_app(s, MockBackend(s))) as client, client.websocket_connect("/vision/video") as br:
         assert json.loads(br.receive_text()) == {"type": "vision_mode", "mode": mode}
+
+
+# ================================================================ drone_state (자세·높이 → 연결 프로그램, 8장)
+def test_bridge_receives_drone_state(settings):
+    b = MockBackend(settings)
+    with TestClient(create_app(settings, b)) as client:
+        with client.websocket_connect("/vision/video") as bridge:
+            got = None
+            for _ in range(20):
+                m = json.loads(bridge.receive_text())
+                if m.get("type") == "drone_state":
+                    got = m
+                    break
+            assert got is not None
+            assert {"pitch_deg", "roll_deg", "yaw_deg", "tof_cm", "h_cm", "flying", "t"} <= set(got)
+            assert got["pitch_deg"] == 0.0 and got["tof_cm"] == b.truth.z_cm
+
+
+# ================================================================ 방향 보정 (카메라 yaw → TT 센서 보정)
+def test_heading_offset_from_vision_corrects_move_direction():
+    import asyncio
+    from drone_server.backends.tello import TelloBackend
+    from drone_server.models import Pose
+    from drone_server.positioning import DeadReckoningProvider, VisionProvider
+    from drone_server.settings import TelloCfg
+
+    class T:  # 실제 TT 흉내: 켤 때 지도 위쪽에서 60° 반시계로 돌아 있었음 → 센서 0° = 지도 -60°
+        def __init__(self):
+            self.h, self.sensor_yaw, self.calls = 0.0, 0.0, []
+
+        def connect(self):
+            pass
+
+        def get_current_state(self):
+            return {"bat": 90, "h": self.h, "yaw": self.sensor_yaw, "tof": self.h + 10, "pitch": 0, "roll": 0}
+
+        def takeoff(self):
+            self.h = 50.0
+
+        def go_xyz_speed(self, x, y, z, s):
+            self.calls.append((x, y, z))
+
+        def send_rc_control(self, *a):
+            pass
+
+    async def go():
+        t = T()
+        vis = VisionProvider(DeadReckoningProvider(Pose(100, 100, 0)))
+        cfg = TelloCfg(go_axes="sdk", segment_cm=100, heading_from_vision=True, heading_min_samples=5)
+        b = TelloBackend(name="real", cfg=cfg, provider=vis, home=Pose(100, 100, 0), make_cmd_tello=lambda: t)
+        await b.connect()
+        await b.takeoff()
+        for i in range(8):  # 카메라: 실제 드론 방향은 지도 기준 -60° (=300°)
+            vis.submit(100, 100, 300.0 + (i % 3 - 1) * 2.0, ts=float(i), confidence=0.9)
+            await asyncio.sleep(0.12)
+        assert b.heading_offset_deg is not None and abs(b.heading_offset_deg - (-60.0)) < 3
+        assert b.attitude()["tof_cm"] == 60.0
+        vis.submit(100, 100, 300.0, ts=100.0, confidence=0.9)
+        await b.move_to(100, 160, 50)  # 지도 위쪽(+y)으로 60cm
+        fwd, left = t.calls[-1][0], t.calls[-1][1]
+        # 드론이 -60°를 보고 있으므로 지도 위쪽은 드론 기준 '오른쪽 앞'(오른쪽 = -left)
+        assert fwd > 0 and left < 0 and abs(math.degrees(math.atan2(-left, fwd)) - 60) < 5
+        await b.close()
+    import math
+    asyncio.run(go())

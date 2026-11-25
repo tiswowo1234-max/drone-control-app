@@ -22,9 +22,9 @@ y_cm = 70.2
 
 [limits]
 max_radius_cm = 250      # home에서 이 거리보다 먼 목표는 거부 [임시] (정문 기준 가장 먼 지도 모서리 약 236 cm → 지도 전체 포함)
-min_alt_cm = 50          # [임시]
+min_alt_cm = 30          # [임시] 2026-11-23: 비행 고도를 낮추며 50 → 30
 max_alt_cm = 150         # 시연 공간 천장 높이 확인 후 조정 [임시]
-default_alt_cm = 80      # [임시] 2026-11-21: 실제 시연 전까지 비행 고도를 이 값으로 고정(카메라 화면 크기 기준). 시연 후 결정
+default_alt_cm = 50      # [임시] 2026-11-23: 80 → 50 (TT 하단 320x240 합성 측정: 태그 인식 95%, 위치 나온 화면 66%, 슬롯 촬영 허용 약 ±12cm). fixed_alt면 이 고도로 고정 비행
 fixed_alt = true         # [임시] true = goto에 z_cm이 없으면 항상 default_alt_cm으로 비행(현재 고도 유지 대신). 시연 후 결정
 min_battery_pct = 20     # 이 값 미만이면 출동 거부
 link_timeout_s = 3       # 앱 ping이 이 시간 끊기면 자동 착륙
@@ -117,12 +117,30 @@ land_descend_to_cm = 100  # 착륙 전에 시뮬레이터 높이 1 m까지 go로
 [real]
 # 실제 RoboMaster TT 백엔드 (python run_server.py real) — PC/라즈베리파이를 TT Wi-Fi에 연결
 pos_source = "estimate"   # "estimate" / "vision" = 카메라 위치 추정(조원 코드 → POST /vision/pose) / "mission_pad"
-speed_cm_s = 30           # [임시] 실내 3m 공간이라 느리게
+speed_cm_s = 15           # [임시] 2026-11-23: 30 → 15 (위치 오차 줄이려 느리게). 구간 50cm면 한 구간 약 4초(TT 응답 제한 7초 안)
 segment_cm = 50
 go_axes = "sdk"
+alt_source = "tof"        # [2026-11-23] 고도 = 거리 센서(바닥까지 직접 잰 값). TT h(이륙 기준 추정)는 시험에서 30cm 틀림. tof 15cm 미만이면 h 사용
+heading_from_vision = true # [2026-11-23] 카메라로 잰 드론 방향으로 TT 방향 센서를 보정해 이동 방향 계산(켤 때 방향이 지도 위쪽이 아니어도 됨)
 keepalive_s = 5.0         # [확정: 2026-11-21 실물] 비행 중 5초 동안 명령이 없으면 'rc 0 0 0 0'(제자리)을 보냄. TT는 15초 무명령이면 스스로 착륙함
 ground_h_cm = 10.0        # [임시] 비행 중인데 TT 높이(h)가 이 값 이하로 ground_s초 이어지면 '스스로 착륙'으로 보고 앱에 알림
 ground_s = 1.0            # [임시]
+face_target = true        # [2026-11-25 임시] 이동 전 목표 쪽으로 기수를 돌린 뒤(cw/ccw) 주로 '전진'으로 이동. 남은 거리·각도가 아래보다 작으면 돌지 않음
+face_min_dist_cm = 30.0   # [임시] 남은 수평 거리가 이보다 짧으면 돌지 않음
+face_min_deg = 10.0       # [임시] 목표 방향과 기수 차이가 이보다 작으면 돌지 않음
+face_settle_s = 0.5       # [임시] 회전 뒤 센서·카메라 안정 대기
+
+[align]
+# 초기 정렬 (2026-11-25): 연결 후 첫 이륙 때 가장 가까운 AprilTag 위로 가서 카메라 위치·방향 보정을 확정한 뒤 출동.
+# 정렬 중 앱 모드는 '이륙 중'(출동 명령은 잠시 거부). 실패하면 앱에 알리고 추정 위치로 계속 비행. 카메라 위치(vision)가 없으면 건너뜀.
+enabled = true
+tags_file = ""            # 비우면 연결 프로그램과 같은 태그 지도(조원 원본 ID 0~38, [bridge] extra_tags = true면 확장판)
+max_tag_dist_cm = 80.0    # [임시] 가장 가까운 태그가 이보다 멀면 건너뜀 (정문 home에서 가장 가까운 태그 = ID 37, 약 22cm)
+wait_fix_s = 3.0          # [임시] 이륙 직후 첫 카메라 위치를 기다리는 시간
+min_fixes = 5             # [임시] 태그 위에서 이만큼(신뢰도 min_confidence 이상) 카메라 위치를 받으면 완료
+min_confidence = 0.6
+require_heading = true    # real: 카메라 방향 보정값([real] heading_from_vision)이 정해져야 완료
+timeout_s = 10.0          # [임시] 태그 위에서 이 시간 안에 완료 못 하면 '정렬 실패' 알림 후 계속
 
 # 미션패드 위치 (pos_source = "mission_pad"일 때). 패드 번호(mid)별 지도 좌표와 회전 [임시]
 # [[mission_pads]]
@@ -140,8 +158,8 @@ margin_m = 0.1          # 지도(0~2.5 m) 밖 이만큼까지는 받아 줌 (추
 
 # ------------------------------------------------------------
 #  2단계 (2026-11-21~): 카메라 → vision/ → 서버 → 앱 (docs/api.md 7~10장)
-#  아래 섹션은 병합 세션이 미리 만들어 둔 것이다. 하위 세션은 값만 읽고, 키를 새로 추가해야 하면
-#  병합 세션에 알린다(같은 파일을 여러 세션이 고치지 않도록).
+#  키를 추가하면 서버(server/drone_server/settings.py)·연결 프로그램(vision/bridge/config.py)·
+#  앱(config 메시지, app/lib/config.dart) 중 읽는 쪽을 함께 고친다 (docs/dev-guide.md 7장).
 # ------------------------------------------------------------
 [video]
 # 실시간 영상 (vision/ → ws /vision/video → 서버 → ws /ws/video → 앱)
@@ -197,9 +215,22 @@ tt_height_px = 240
 tt_mount_yaw_deg = -90.0               # [확정: 2026-11-21 사용자 실물 확인] 드론 앞쪽 = 카메라 화면 위쪽 + 이 값(도, 시계 +).
                                        # 앞쪽을 가리키는 화살표가 화면에서 반시계 90° 돌아(왼쪽을 향해) 보였음 → -90
 esp32_mount_yaw_deg = 0.0              # [임시] XIAO를 화면 위쪽 = 드론 앞쪽으로 달면 0. 달고 나서 화살표로 확인
+tag_log = true                         # [임시: 태그 인식 시험 중] 태그를 읽으면 연결 프로그램 창에 번호·크기(px)·위치·높이·방향 출력
+tag_log_every_s = 0.5                  # 같은 태그가 계속 보일 때 출력 간격(초)
+tilt_log_every_s = 1.0                 # 태그가 안 보일 때 [자세](TT 기울기·거리 센서) 줄 출력 간격(초, tt_down·tag_log 켬일 때)
 video_forward_up = true                # 앱 영상을 드론 앞쪽이 위로 오게 돌려서 보냄(위치 계산 화면은 그대로)
+extra_tags = false                     # [2026-11-23 보류] true = 슬롯 보드 태그(ID 39~54, 슬롯 S1~S4 옆 4개씩) 사용. 보드를 인쇄·부착한 뒤 켤 것
+                                       # (vision/data/maps/의 확장 배치 파일·지도 그림 사용, 조원 원본은 그대로. vision/tools/make_slot_boards.py)
+tt_use_imu = true                      # [2026-11-23] TT 기울기(pitch·roll)를 위치 계산에 '중력 방향'으로 넣음(조원 코드 gravity_cam, 기울기 ±1.5°로 제한)
+tt_pitch_sign = 1.0                    # [확정: 2026-11-23 실물] TT pitch 부호. 기수를 들면 + (맞음)
+tt_roll_sign = 1.0                     # [확정: 2026-11-23 실물] TT roll 부호. 오른쪽이 내려가면 + (맞음)
+tt_tof_check_cm = 15.0                 # [임시] 카메라 계산 높이와 TT 거리 센서 높이 차가 이보다 크면 그 위치를 버림(0 = 끔)
+tt_tof_offset_cm = 0.0                 # [확정: 2026-11-23 실물] 거리 센서 높이가 실제와 비슷함 → 보정 0. 낮은 높이에선 10cm로 고정(센서 하한)되므로 15cm 미만 값은 검사에 안 씀
+drone_state_max_age_s = 0.3            # 서버가 보낸 드론 자세가 이보다 오래되면 쓰지 않음
+tt_tag_roi = 0.7                       # [임시: 2026-11-23 실물 시험] 태그 중심이 화면 가운데 이 비율(가로·세로) 안에 있는 태그만 위치 계산에 씀.
+                                       # 0.5 = 가운데 1/4 넓이(보정 안 된 렌즈의 가장자리 왜곡 회피), 1.0 = 화면 전체. 카메라 보정 후 넓혀 볼 것
 tt_crop_top_left = true                # [확정: 사용자 확인 코드] TT 화면은 320x240보다 크게 디코딩되고 실제 영상은 왼쪽 위 320x240뿐(나머지 잡음) → 그 부분만 잘라 씀
-tt_hfov_deg = 60.0                     # [임시: 모름] 카메라 보정(calibrate_camera.py) 전까지 쓰는 시야각 추정값
+tt_hfov_deg = 75.5                     # [2026-11-25 실측 보정] 11-25 16:38 비행 로그: 태그 높이/거리센서 = 1.34(116표본, 중앙 1.36) → 60°에서 보정. 태그 40mm 실측 확인. 더 정밀히는 calibrate_camera.py
 tt_camera_file = ""                    # 카메라 보정 결과 JSON 경로 (비어 있으면 tt_hfov_deg로 추정)
 photo_search_period_s = 0.2            # 슬롯 촬영 판단·사진 찾기 주기 (조원 코드 기본값)
 

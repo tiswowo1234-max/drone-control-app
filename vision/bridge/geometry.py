@@ -27,6 +27,22 @@ def yaw_from_compass(deg: float) -> float:
     return float(deg) % 360.0
 
 
+def gravity_in_camera(pitch_deg: float, roll_deg: float, mount_yaw_deg: float) -> np.ndarray:
+    """드론 기울기(pitch 기수 위 +, roll 오른쪽 아래 +) → 하향 카메라 좌표(x 오른쪽, y 아래, z 광축)의 '아래' 단위벡터.
+
+    몸체 좌표 FRD(x 앞, y 오른쪽, z 아래)에서 중력 = (-sin p, sin r cos p, cos r cos p).
+    카메라 장착: 드론 앞쪽 = 화면 위쪽 + mount_yaw_deg(시계 +) → 화면 위쪽은 앞쪽에서 시계 방향 -mount 만큼.
+    TT 하단 카메라(mount -90°): 화면 위쪽 = 드론 오른쪽, 화면 오른쪽 = 드론 뒤쪽.
+    """
+    p, r = math.radians(pitch_deg), math.radians(roll_deg)
+    g = np.array([-math.sin(p), math.sin(r) * math.cos(p), math.cos(r) * math.cos(p)])
+    a = math.radians(-mount_yaw_deg)
+    top = np.array([math.cos(a), math.sin(a)])                      # (앞, 오른쪽) 성분
+    right = np.array([math.cos(a + math.pi / 2), math.sin(a + math.pi / 2)])
+    v = np.array([g[:2] @ right, -(g[:2] @ top), g[2]])
+    return v / np.linalg.norm(v)
+
+
 def look_down(x: float, y: float, height: float, yaw_cw_deg: float, tilt_deg: float = 0.0):
     """지도→카메라 회전 R, 이동 t. 화면 위쪽이 yaw_cw_deg(명세 yaw) 방향을 보는 하향 카메라.
     조원 sim_camera.look_down과 같은 식(heading = 나침반 방위 = 명세 yaw)."""

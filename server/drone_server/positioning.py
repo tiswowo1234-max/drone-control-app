@@ -163,9 +163,27 @@ class VisionProvider(PositionProvider):
         self._fix_z: float | None = None   # 카메라 추정 높이(cm, 표시용)
         self._fix_at: float | None = None
         self._last_ts: float | None = None
+        self._yaw_sample: tuple[float, float, float | None] | None = None  # (yaw, 받은 시각, confidence)
+        self._seq = 0                                    # 받은 카메라 위치 수 (초기 정렬이 셈)
+        self._recent: list[tuple[int, float | None]] = []  # 최근 (번호, confidence)
+
+    @property
+    def seq(self) -> int:
+        with self._lock:
+            return self._seq
+
+    def fixes_since(self, seq: int, min_confidence: float = 0.0) -> int:
+        """번호 seq 이후 받은 카메라 위치 중 신뢰도가 min_confidence 이상(또는 신뢰도 없음)인 개수."""
+        with self._lock:
+            return sum(1 for n, c in self._recent if n > seq and (c is None or c >= min_confidence))
+
+    def yaw_sample(self) -> tuple[float, float, float | None] | None:
+        """가장 최근 카메라 방향 표본 (방향 보정용). 없으면 None."""
+        with self._lock:
+            return self._yaw_sample
 
     def submit(self, x_cm: float, y_cm: float, yaw_deg: float | None = None, ts: float | None = None,
-               z_cm: float | None = None) -> bool:
+               z_cm: float | None = None, confidence: float | None = None) -> bool:
         """새 추정값. ts가 이전 값보다 오래된(순서가 뒤바뀐) 값이면 무시하고 False."""
         with self._lock:
             if ts is not None and self._last_ts is not None and ts < self._last_ts:
@@ -175,6 +193,11 @@ class VisionProvider(PositionProvider):
             self._fix = (x_cm, y_cm, yaw_deg)
             self._fix_z = z_cm
             self._fix_at = self._clock()
+            self._seq += 1
+            self._recent.append((self._seq, confidence))
+            del self._recent[:-200]
+            if yaw_deg is not None:
+                self._yaw_sample = (yaw_deg, self._fix_at, confidence)
         fb = self.fallback.pose()
         z = fb.z_cm if fb else 0.0
         yaw = yaw_deg if yaw_deg is not None else (fb.yaw_deg if fb else 0.0)
@@ -185,7 +208,7 @@ class VisionProvider(PositionProvider):
         """마지막 카메라 값을 버린다 (위치 추적 모드 전환, docs/api.md 11장).
         fallback은 이미 마지막 값으로 맞춰져 있으므로 그 위치에서 명령 누적 추정으로 이어 간다."""
         with self._lock:
-            self._fix = self._fix_z = self._fix_at = self._last_ts = None
+            self._fix = self._fix_z = self._fix_at = self._last_ts = self._yaw_sample = None
 
     def display_z_cm(self) -> float | None:
         """신선한 카메라 높이(cm)가 있으면 그 값 (앱 표시용), 없으면 None."""

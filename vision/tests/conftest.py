@@ -18,4 +18,4 @@ def settings():
 @pytest.fixture(scope="session")
 def scene(settings):
     from bridge.synthetic import MapScene
-    return MapScene(settings.map_w_m, "photos")
+    return MapScene(settings.map_w_m, "photos", settings.extra_tags)

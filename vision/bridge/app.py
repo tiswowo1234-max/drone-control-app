@@ -12,7 +12,9 @@ import argparse
 import base64
 import json
 import logging
+import os
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -62,6 +64,38 @@ def video_frame(img: np.ndarray, width: int, mount_yaw_deg: float = 0.0, forward
     return img
 
 
+_screen_log = logging.getLogger("bridge.screen")  # [태그]·[자세] 줄을 파일에도 남김 (화면에는 print로)
+_screen_log.propagate = False
+LOG_DIR = cfgmod.PROJECT_DIR / "vision" / "logs"
+
+
+def screen(line: str) -> None:
+    """연결 프로그램 창에 한 줄 출력 + 로그 파일(vision/logs/bridge-날짜.log)에 기록."""
+    print(line, flush=True)
+    _screen_log.info(line)
+
+
+def add_log_file(args) -> Path | None:
+    """창 출력(상태 줄·[태그]·[자세])을 vision/logs/bridge-날짜.log에도 남긴다 (실물 시험 뒤 분석용).
+    하루 한 파일, 실행마다 구분선. 자동 테스트 중에는 만들지 않는다."""
+    import datetime as dt
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return None
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOG_DIR / f"bridge-{dt.date.today():%Y%m%d}.log"
+        h = logging.FileHandler(path, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(h)
+        _screen_log.addHandler(h)
+        _screen_log.setLevel(logging.INFO)
+        logging.getLogger().info("===== 연결 프로그램 시작 (인자: %s) =====", " ".join(sys.argv[1:]))
+        return path
+    except OSError as e:
+        log.warning("로그 파일을 만들지 못했습니다: %s", e)
+        return None
+
+
 class Bridge:
     def __init__(self, s: cfgmod.Settings, args):
         self.s, self.args = s, args
@@ -69,6 +103,9 @@ class Bridge:
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.mode = args.mode or s.default_mode
+        self.tag_log_on = s.tag_log if args.tag_log is None else args.tag_log
+        self.tag_log_t, self.tag_log_last_ids = 0.0, []
+        self.tilt_log_t = 0.0
         self.requested_mode: str | None = None
         self.synthetic = self._decide_synthetic()
         self.scene = None
@@ -79,7 +116,9 @@ class Bridge:
         self.capture = make_capture(s)
         self.geo = None
         self.sender = HttpSender(s.server_url, self.dry)
-        self.video = VideoLink(s.server_url, self.request_mode, self.status_dict, self.dry)
+        self.video = VideoLink(s.server_url, self.request_mode, self.status_dict, self.dry,
+                               on_drone_state=self.on_drone_state)
+        self._drone_state: tuple[dict, float] | None = None  # (서버가 보낸 자세·높이, 받은 시각)
         self.last_status = None
         self.last_pose_post = -1e9
         self.last_photo_check = -1e9
@@ -137,7 +176,7 @@ class Bridge:
         if self.synthetic:
             from .synthetic import MapScene, SyntheticCamera
             if self.scene is None:
-                self.scene = MapScene(s.map_w_m, a.synthetic_map)
+                self.scene = MapScene(s.map_w_m, a.synthetic_map, s.extra_tags)
             w, h = s.frame_size(mode)
             if mode == "esp32":
                 from localization.camera_simulator import CameraConfig
@@ -271,10 +310,80 @@ class Bridge:
             path.write_bytes(buf.tobytes())
             log.info("저장: %s", path.name)
 
+    def on_drone_state(self, msg: dict) -> None:
+        self._drone_state = (msg, time.monotonic())
+
+    def drone_state(self) -> dict | None:
+        """최근 drone_state ([bridge] drone_state_max_age_s 안의 것만). 오래되면 None → 기울기·높이 검사 없이 계산."""
+        ds = self._drone_state
+        if ds is None or time.monotonic() - ds[1] > self.s.drone_state_max_age_s:
+            return None
+        return ds[0]
+
+    def drone_state_text(self) -> str:
+        """창 출력용 TT 자세·높이 (기울기 부호·거리 센서 확인용)."""
+        ds = self.drone_state()
+        if not ds:
+            return "TT 자세 정보 없음 (서버를 새 코드로 다시 켰는지, 드론이 연결됐는지 확인)"
+        parts = []
+        if "pitch_deg" in ds:
+            parts.append(f"앞뒤(pitch) {ds['pitch_deg']:+.0f}°")
+        if "roll_deg" in ds:
+            parts.append(f"좌우(roll) {ds['roll_deg']:+.0f}°")
+        if "tof_cm" in ds:
+            parts.append(f"거리센서 {ds['tof_cm']:.0f}cm")
+        if "h_cm" in ds:
+            parts.append(f"이륙기준 높이 {ds['h_cm']:.0f}cm")
+        return "TT " + " ".join(parts) if parts else "TT 자세 값 없음"
+
+    def tag_log(self, res) -> None:
+        """태그 인식 시험용 창 출력 ([bridge] tag_log 또는 --tag-log).
+
+        태그가 보이면 tag_log_every_s마다 한 줄(번호·화면 속 크기·계산된 위치·높이·방향),
+        안 보이게 되면 한 번 '태그 없음'. 같은 내용이 계속되면 간격을 지켜 찍는다.
+        """
+        if not self.tag_log_on:
+            return
+        now = time.monotonic()
+        seen = res.tag_seen or []
+        skipped = f"  (가장자리라 뺌: ID {', '.join(str(i) for i in res.tag_ignored)})" if res.tag_ignored else ""
+        if res.height_reject:
+            skipped += f"  (높이 불일치로 버림: 카메라 {res.height_reject[0]}cm / 거리센서 {res.height_reject[1]}cm)"
+        if self.mode == "tt_down" and not res.imu_used:
+            skipped += "  (기울기 정보 없음)"
+        if self.mode == "tt_down":
+            skipped += f"  [{self.drone_state_text()}]"
+        has_reason = bool(res.tag_ignored or res.height_reject)  # 기울기 표시만 있는 경우는 출력할 이유가 아님
+        if not seen:
+            if (not has_reason and self.mode == "tt_down" and now - self.tilt_log_t >= self.s.tilt_log_every_s):
+                self.tilt_log_t = now
+                screen(f"[자세] {time.strftime('%H:%M:%S')} 태그 없음 | {self.drone_state_text()}")
+            if has_reason and now - self.tag_log_t >= self.s.tag_log_every_s:
+                self.tag_log_t = now
+                screen(f"[태그] {time.strftime('%H:%M:%S')} [{self.mode}] 가운데 영역 태그 없음{skipped}")
+            if self.tag_log_last_ids:
+                screen(f"[태그] {time.strftime('%H:%M:%S')} 태그 없음 (마지막: ID "
+                      f"{', '.join(str(i) for i in self.tag_log_last_ids)})")
+                self.tag_log_last_ids = []
+            return
+        ids = [i for i, _ in seen]
+        if ids == self.tag_log_last_ids and now - self.tag_log_t < self.s.tag_log_every_s:
+            return
+        self.tag_log_t, self.tag_log_last_ids = now, ids
+        tags = "  ".join(f"ID {i}({side:.0f}px)" for i, side in seen)
+        if res.ok:
+            z = f" 높이 {res.z_m * 100:.0f}cm" if res.z_m is not None else ""
+            pose = (f"위치 ({res.x_m * 100:.1f}, {res.y_m * 100:.1f}) cm{z} 방향 {round(self.drone_yaw(res)) % 360}°"
+                    f" [{'측정' if res.measured else '예측'}]")
+        else:
+            pose = f"위치 계산 안 됨 ({res.status})"
+        screen(f"[태그] {time.strftime('%H:%M:%S')} [{self.mode}] {tags} | {pose}{skipped}")
+
     def process_frame(self, f) -> None:
         self.record(f)
-        res = self.localizer.process(f.image, f.mono)
+        res = self.localizer.process(f.image, f.mono, self.drone_state())
         self.last_result = res
+        self.tag_log(res)
         self.counts["frames"] += 1
         now = time.monotonic()
         self.capture.on_pose(f.mono, res.x_m if res.ok else None, res.y_m if res.ok else None)
@@ -324,9 +433,9 @@ class Bridge:
         pose = "위치 없음" if r is None or not r.ok else f"({r.x_m:.3f}, {r.y_m:.3f}) m yaw {r.yaw_deg:.0f}° {r.status}"
         st = self.sender.stats
         reply = self.sender.last_pose_reply
-        log.info("[%s] 카메라 %s %s | %s | 위치 보냄 %d (ok %d) 서버응답 %s | 영상 %d장 | 사건 %d",
+        log.info("[%s] 카메라 %s %s | %s | 위치 보냄 %d (ok %d) 서버응답 %s | 영상 %d장 | 사건 %d | %s",
                  self.mode, "OK" if ok else "없음", msg, pose, st["pose_sent"], st["pose_ok"], reply,
-                 self.video.sent_frames, self.counts["incidents"])
+                 self.video.sent_frames, self.counts["incidents"], self.drone_state_text())
 
     def run(self) -> None:
         self.sender.start()
@@ -391,6 +500,8 @@ def parse_args(argv=None):
     p.add_argument("--input-once", action="store_true", help="--input을 한 번만 재생하고 끝냄")
     p.add_argument("--tt-upscale", type=int, default=1,
                    help="tt_down: 태그 찾기 전 화면 확대 배수 (2 = 작은 태그 인식률↑, 오차는 조금↑. README 참고)")
+    p.add_argument("--tag-log", action=argparse.BooleanOptionalAction, default=None,
+                   help="태그를 읽을 때마다 창에 번호·크기·위치 출력 (기본 [bridge] tag_log)")
     p.add_argument("--dry-run", action="store_true", help="서버에 아무것도 보내지 않고 보낼 내용을 출력")
     p.add_argument("--save-dir", help="잘라낸 사건 사진을 이 폴더에도 저장")
     p.add_argument("--record-dir", help="받은 카메라 원본 화면을 이 폴더에 PNG로 저장 (카메라 보정용)")
@@ -407,6 +518,7 @@ def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    log_path = add_log_file(args)
     s = cfgmod.load(args.settings)
     if args.server:
         import dataclasses
@@ -414,6 +526,8 @@ def main(argv=None):
     if args.truth and len(args.truth) not in (2, 3, 4):
         raise SystemExit("--truth는 X Y [Z YAW]")
     log.info("설정 %s, 서버 %s%s", s.source, s.server_url, " (dry-run: 보내지 않음)" if args.dry_run else "")
+    if log_path:
+        log.info("로그 파일: %s", log_path)
     bridge = Bridge(s, args)
 
     def stop(*_):
