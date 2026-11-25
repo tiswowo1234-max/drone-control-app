@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -287,6 +288,28 @@ class DroneClient extends ChangeNotifier {
 
   /// 모터 즉시 정지(추락). 화면에서 확인 대화상자를 거친 뒤에만 부른다.
   Future<CmdResult> emergency() => sendCommand('emergency', {'confirm': true});
+
+  // ---------------------------------------------------------------- 차 (docs/api.md v0.8 13장)
+
+  /// 지도에서 찍은 경로점(cm, 출발 위치 제외)으로 차를 보낸다. 서버가 차 좌표로 바꿔 경로를 보내고 바로 출발시킨다.
+  Future<CmdResult> carRoute(List<Offset> pointsCm, {double? speedMmS}) =>
+      sendCommand('car_route', {
+        'points_cm': [
+          for (final p in pointsCm)
+            [double.parse(p.dx.toStringAsFixed(1)), double.parse(p.dy.toStringAsFixed(1))],
+        ],
+        if (speedMmS != null) 'speed_mm_s': speedMmS,
+      });
+
+  /// 차 정지 (경로 주행·조이스틱 모두 멈춤)
+  Future<CmdResult> carStop() => sendCommand('car_stop');
+
+  /// 차 비상정지 — 해제([carClearEstop]) 전까지 주행 명령을 받지 않는다
+  Future<CmdResult> carEstop() => sendCommand('car_estop');
+  Future<CmdResult> carClearEstop() => sendCommand('car_clear_estop');
+
+  /// 조이스틱 속도 (응답 없음, 0.12초마다). 보내지 못했으면 false.
+  bool carDrive(int vMmS, double omegaRadS) => _sendJson(buildCarDrive(vMmS, omegaRadS));
 
   void _setStatus(LinkStatus s) {
     if (_status == s) return;

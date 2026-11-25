@@ -153,6 +153,31 @@ cd C:\dev\drone-control-app\vision
    마지막에 `RMS reprojection error 0.4 px`처럼 나온다. 0.5px 이하면 좋고, 1px 넘으면 흐린 사진을 지우고 다시 한다.
 4. `config/settings.toml`의 `[bridge] tt_camera_file = "vision/calibration/tt_down_320x240.json"`으로 바꾼다.
 
+## 5-1. UGV 인식 (따라가기 1단계, 2026-11-25~)
+
+TT 하단 카메라 화면에서 **UGV 윗면에 붙인 AprilTag**를 찾아 드론 기준 위치(앞·오른쪽 cm)와 UGV 방향, UGV 지도 위치를 계산한다.
+지금은 **로그와 앱 영상 표시만** 한다(서버로 보내기·따라가기 비행은 2·3단계). 설정은 `config/settings.toml`의 `[ugv]`.
+
+- **태그:** tag36h11, 지도에 없는 번호(기본 100). 지도 위치 계산은 지도 번호(0~38)만 쓰므로 UGV 태그가 섞여도 영향이 없다.
+  위치 계산이 이미 찾은 태그 목록을 그대로 쓰기 때문에 추가 계산은 거의 없다.
+- **인쇄:** `.venv\Scripts\python tools\make_ugv_tag.py` → `tools\out\ugv_tag_100_80mm.pdf`.
+  **실제 크기(100%)**로 인쇄하고 검은 사각형 한 변을 자로 재서 `[ugv] tag_size_cm`에 넣는다(거리 계산이 이 값에 비례).
+  흰 여백은 자르지 말고, **FRONT 화살표가 UGV 앞쪽**을 보게 붙인다. 바닥에서 태그까지 높이를 재서 `[ugv] height_cm`에 넣는다.
+- **로그:** UGV를 찾거나 0.5초 이상 놓치면 한 줄, 보이는 동안 `[ugv] log_every_s`마다 한 줄:
+  `[UGV] UGV 앞 +12.0cm 오른쪽 +2.0cm 아래 45.2cm, 방향 +20° (태그 49px) | 지도 (1.217, 1.313) m yaw 19° | 태그 높이 추정 17cm`
+  - 앞·오른쪽: 드론(카메라) 바로 아래 기준. 방향: UGV 앞쪽 − 드론 앞쪽(시계 +).
+  - 지도 위치와 "태그 높이 추정"은 그 장에서 드론 지도 위치가 나왔을 때만. 태그 높이 추정이 `[ugv] height_cm`과 많이 다르면
+    `tag_size_cm`(인쇄 크기)이나 카메라 시야각(`tt_hfov_deg`, 보정 전 추정값)을 의심한다.
+- **앱 영상:** 태그 테두리(초록)와 UGV 앞쪽 화살표(노랑), 왼쪽 위에 `UGV F+12 R+2cm +20deg`(앞·오른쪽·방향). 안 보이면 빨간 `UGV --`.
+- **실물 확인 방법 (비행 없이):** `start_real_drone.bat`으로 서버·연결 프로그램을 켜고(이륙하지 않음), 드론을 손으로 **바닥에서 50cm** 높이,
+  카메라가 아래를 보게 든다. UGV(또는 태그 붙인 상자)를 드론 아래에서 앞·뒤·옆으로 옮기고 돌려 보며 로그의 앞·오른쪽·방향 부호와 크기가 맞는지 본다.
+  드론 앞쪽 12cm에 UGV를 같은 방향으로 두면 `앞 +12 오른쪽 0 방향 0`에 가까워야 한다.
+- **합성 카메라 시험:** `.\run_bridge.bat --dry-run --synthetic on --mode tt_down --truth 1.2 1.2 0.5 0 --ugv 1.2 1.32 0 --ugv-circle 0.08`
+  (드론은 (1.2, 1.2) m 50cm에 고정, UGV는 드론 앞 12cm 둘레를 반지름 8cm로 돈다. 로그에 참값 대비 오차가 같이 나온다)
+- 합성 화면 측정(300장, 당시 설정 60cm·시야각 60°, UGV는 드론 앞 6~18cm·옆 ±8cm): UGV 인식 296/300, 상대 위치 오차 중앙값 0.1cm,
+  UGV 지도 위치 오차 중앙값 1.9cm(95% 6.9cm — 드론 지도 위치 오차가 그대로 더해짐). 합성 화면은 흔들림·초점 문제가 없어 실물은 더 나쁠 것이다.
+- esp32 모드에서도 동작하지만(태그를 따로 찾음) 렌즈 왜곡 보정 없이 시야각만으로 계산한다.
+
 ## 6. 실행 옵션
 
 `.\run_bridge.bat --help`로 전체 목록을 본다. 자주 쓰는 것:
@@ -170,6 +195,7 @@ cd C:\dev\drone-control-app\vision
 | `--save-dir 폴더` | 잘라낸 사건 사진도 저장 |
 | `--record-dir 폴더` | 카메라 원본 화면 저장 (보정용) |
 | `--tt-upscale 2` | tt_down: 태그 찾기 전 화면 2배 확대 (아래 7장) |
+| `--ugv X Y [YAW]` | 합성 카메라에 UGV 태그를 그림 (5-1장). `--ugv-circle R`·`--ugv-speed V`로 원 주행 |
 
 ## 7. 측정 결과와 알아 둘 점 (합성 카메라, 2026-11-21)
 
@@ -219,10 +245,11 @@ vision/
     synthetic.py       합성 카메라
     server_link.py     서버 HTTP·WebSocket
     geometry.py        좌표·투영·yaw 변환
+    ugv.py             UGV 태그 인식(UGV 따라가기·차 위치), 앱 영상 표시, 합성 카메라용 UGV 그리기
   teammate/          조원 코드 사본 (SOURCE.md) — 조원 원본 폴더는 수정하지 않고, 바꾼 곳은 SOURCE.md에 적는다
   data/maps/         확장 태그 배치·지도 그림 (슬롯 보드 태그, [bridge] extra_tags = true일 때만)
   print/             인쇄용 AprilTag PDF (간단판·자르기판·슬롯 보드)와 안내도
-  tools/             인쇄 PDF 생성 스크립트 (make_compact_tags.py, make_tag_cut_sheet.py, make_slot_boards.py)
+  tools/             인쇄 PDF 생성 스크립트 (make_compact_tags.py, make_tag_cut_sheet.py, make_slot_boards.py, make_ugv_tag.py)
   tests/             자동 시험 (test_imu.py: 기울기 보정 추가)
   logs/              창 출력 기록 bridge-날짜.log (git 제외)
   setup.bat, run_bridge.bat, requirements.txt

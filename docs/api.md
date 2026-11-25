@@ -1,4 +1,4 @@
-# 앱 ⇄ 중계 서버 API 명세 (초안 v0.7)
+# 앱 ⇄ 중계 서버 API 명세 (초안 v0.8)
 
 > 상태: **초안**. 2단계(2026-11-21~)부터 조원 위치 인식 코드는 우리 프로젝트 `vision/`에 병합되어 이 명세를 따른다.
 > 전체 흐름: XIAO 카메라 →(Wi-Fi 영상)→ `vision/` 연결 프로그램 →(7·8·9장)→ 중계 서버(노트북) →(3·10장)→ 앱
@@ -390,6 +390,64 @@ Unity 시뮬레이터는 바닥에 인쇄 지도·AprilTag가 없는 3D 캠퍼�
 - 합성 화면 기본 그림은 태그와 예시 사건 사진이 함께 있는 `map_with_photos(_gray).png`다(슬롯 촬영까지 시험되도록).
   이 값은 **합성 카메라 그리기에만** 쓴다. 서버 위치(`state.pos`)는 여전히 연결 프로그램이 계산해 보낸 값이다.
 
+## 13. 차(UGV, 미니 경찰차) 제어 (v0.8)
+
+조원 `police-car-controller`(PWA, Web Bluetooth)가 차에 보내던 **BLE 명령을 서버가 대신** 보낸다. 차 펌웨어는 바꾸지 않는다.
+앱은 지금처럼 서버에만 연결한다. 설정: `config/settings.toml` `[car]`, 실행: `run_server.bat real --vision --car ble|mock|off`.
+
+```
+앱 ──ws /ws (car_* 명령, car_drive)──▶ 서버 ──BLE (한 줄 JSON, 18바이트씩)──▶ 차 ESP32-CAM (BLE 이름 PoliceCar-XIAO, 중계만)
+                                                                                     ──UART──▶ OpenRB-150 (주행·경로·STATUS)
+vision/ ──POST /vision/ugv (드론이 본 UGV 태그의 지도 위치)──▶ 서버 ◀──BLE STATUS (엔코더 위치)── 차
+```
+
+**차 위치:** 드론 하단 카메라가 UGV 윗면 태그를 보면 그 지도 위치를 쓰고(`pos_source = "vision"`), 그 순간의 차 엔코더 값과 짝지어
+"엔코더 좌표 → 지도 좌표" 기준점을 잡는다. 드론이 못 보는 동안은 기준점 + 지금 엔코더 값(`"odom"`). 한 번도 못 봤으면 위치 없음.
+차 엔코더 값이 한 번에 `odom_jump_mm` 넘게 바뀌면(차 재시작·원점 재설정) 기준점을 버리고 `CAR_POSITION_LOST`를 알린다.
+
+### 13.1 `config.car`
+```json
+"car": {"link": "ble", "max_speed_mm_s": 100, "max_omega_rad_s": 1.5, "route_speed_mm_s": 60,
+        "max_points": 15, "map_margin_cm": 5}
+```
+- 차 기능이 꺼져 있으면(`[car] mode = "off"`) `"car": null` → 앱은 차 버튼을 숨긴다. `max_points`는 출발 위치를 뺀 경로점 수.
+
+### 13.2 앱 → 서버
+| 메시지 | 내용 | 응답 |
+|---|---|---|
+| `{"type":"cmd","id":..,"cmd":"car_route","points_cm":[[x,y],...],"speed_mm_s":60}` | 지도 cm 경로점(출발 위치 제외)으로 출발. 서버가 `STOP` → `RESET_ODOM`(지금 자리를 엔코더 원점으로) → 원점 근처 `STATUS` 확인 → `SET_ROUTE`(P0 = `[0,0]`, 나머지는 기준점으로 바꾼 엔코더 mm) → `START`. 펌웨어는 첫 점이 원점에서 50mm 넘게 떨어진 경로를 조용히 버리기 때문 | ack (약 0.3~1초 뒤) |
+| `{"type":"cmd","id":..,"cmd":"car_stop"}` | 정지 (경로·조이스틱 모두) | ack |
+| `{"type":"cmd","id":..,"cmd":"car_estop"}` / `"car_clear_estop"` | 비상정지 / 해제. 비상정지 중에는 `car_route`를 거부하고 `car_drive`를 보내지 않는다 | ack |
+| `{"type":"car_drive","v_mm_s":50,"omega_rad_s":-0.3}` | 조이스틱 (0.12초마다, **응답 없음**). 위 = +v, 왼쪽 = +ω. 서버가 `max_*`로 자른다 | 없음 |
+
+- 명령권 앱만 보낼 수 있다(1장). 명령권이 아닌 앱의 `car_drive`는 무시한다.
+- `car_route` 오류: `CAR_NO_RESPONSE`(차가 `reset_wait_s` 안에 원점 재설정을 알리지 않음 — 경로는 보내지 않음), `CAR_NOT_CONNECTED`(BLE 연결 안 됨), `CAR_NO_POSITION`(드론이 차를 아직 못 봄), `CAR_POSITION_OLD`(마지막 인식이
+  `route_anchor_max_s`보다 오래됨), `CAR_ESTOP`, `OUT_OF_BOUNDS`(지도 가장자리 `map_margin_cm` 밖), `BAD_REQUEST`(점 개수·형식).
+- **안전:** `car_drive`가 `drive_timeout_s`(0.5초) 끊기면 서버가 `STOP`. 앱 ping이 `link_timeout_s` 끊기거나 앱이 모두 나가면 움직이는 차를 `STOP`
+  (`CAR_LINK_LOST_STOP`). 명령권 앱이 바뀌면 조이스틱 주행을 `STOP`. 드론 비상정지는 차와 무관하다.
+
+### 13.3 `state.car` (3.2 `state`에 추가)
+```json
+"car": {"connected": true, "link_message": "연결됨: PoliceCar-XIAO", "state": "RUNNING",
+        "pos": {"x_cm": 132.9, "y_cm": 78.5, "yaw_deg": 1.6}, "pos_source": "vision", "seen_age_s": 0.3,
+        "route": {"points_cm": [[132.9, 78.5], [120, 110], [90, 110]], "wp": 1, "n": 3}, "driving": false}
+```
+- `state`: 차 펌웨어(OpenRB) 상태 그대로: READY · MANUAL · ROUTE_READY(경로 있음, 대기) · **RUNNING**(경로 주행) · ESTOP · MOTOR_ERROR · LINK_LOST(ESP32-CAM 심장박동 0.6초 끊김). 연결 안 됨이면 null.
+- `pos_source`: `vision` | `odom` | null. `seen_age_s`: 드론이 마지막으로 차를 인식한 뒤 지난 초.
+- `route`: 서버가 보낸 경로(지도 cm, 첫 점 = 출발 위치). `wp` = 차가 향하는 점 번호(첫 점 포함 번호, 1부터). 차가 RUNNING에서 벗어나면(경로 끝 = ROUTE_READY, 또는 정지) null.
+- 이벤트: `CAR_CONNECTED` · `CAR_DISCONNECTED` · `CAR_LOCATED`(처음 인식) · `CAR_POSITION_LOST` · `CAR_ESTOP` · `CAR_ERROR`(ESP32-CAM이 보낸 ERROR, 예: `BLE_COMMAND_TOO_LONG`) · `CAR_LINK_LOST_STOP` · `CAR_ROUTE_DONE`(경로 끝 도착) · `CAR_ROUTE_NOT_STARTED`(START 뒤 `route_start_timeout_s` 안에 RUNNING이 안 됨 — 펌웨어는 거부해도 오류를 안 보냄).
+- 펌웨어 쪽 안전장치(참고): BLE가 끊기면 ESP32-CAM이 STOP, `DRIVE`가 0.3초 끊기면 OpenRB가 정지, ESP32-CAM 심장박동이 0.6초 끊기면 OpenRB가 정지.
+
+### 13.4 `vision/` → 서버: `POST /vision/ugv`
+```json
+{"x_m": 1.202, "y_m": 0.715, "yaw_deg": 1.0, "ts": 1795590923.98, "mode": "tt_down", "forward_m": 0.12, "right_m": 0.0}
+```
+- 지도 m(7.1과 같은 좌표), `yaw_deg` = UGV 앞쪽(태그 ▲)의 지도 방향(위쪽 0·시계 +). `forward_m`·`right_m`은 참고용(드론 기준 상대 위치).
+- `vision/`은 **그 장에서 드론 위치를 실제로 측정했고**, 추정 태그 높이가 `[ugv] height_cm`과 `max_height_err_cm` 안에서 맞을 때만 보낸다
+  (이륙·하강 중 드론 위치가 늦게 따라와 십수 cm 틀린 값이 나왔음). 빈도 상한 `[bridge] pose_send_hz`.
+- 오류: `BAD_REQUEST`(숫자 없음, 차 기능 꺼짐), `OUT_OF_BOUNDS`.
+- `GET /sim/truth`(12장)는 가짜 차가 있으면 `"ugv": {"x_m","y_m","yaw_deg"}`도 준다 → 합성 카메라가 그 자리에 UGV 태그를 그린다.
+
 ## 변경 기록
 | 버전 | 날짜 | 내용 |
 |---|---|---|
@@ -400,3 +458,4 @@ Unity 시뮬레이터는 바닥에 인쇄 지도·AprilTag가 없는 3D 캠퍼�
 | 0.5 | 2026-11-11 | 구현에 맞춰 명시: 실패 응답 `message`, vision 꺼짐·confidence 범위 → `BAD_REQUEST`, `ts`는 순서 확인용(오래되면 무시), stale 판정은 서버 수신 시각, vision `yaw_deg`는 표시용, 권장 빈도 2Hz 이상, `/` 상태의 `vision.last_age_s`, event `BAD_REQUEST`, 이륙 중 `return_home` BUSY, 귀환 중 goto 교체, `z_cm` 생략 시 고도 클램프, 도착 오차 약 20cm, `api_version` = 명세 버전 |
 | 0.6 | 2026-11-11 | 명령권 넘겨받기: 명령권 앱이 끊기면 남은 앱 중 가장 최근 연결 앱이 이어받음. 자동 착륙은 남은 앱이 없을 때(또는 명령권 앱의 ping이 끊길 때) |
 | 0.7 | 2026-11-21 | (2026-11-25 추가, 메시지 형식 변화 없음: 초기 정렬 event `ALIGN_START`·`ALIGN_DONE`·`ALIGN_FAILED`·`ALIGN_SKIPPED`, 정렬 중 `taking_off`. real은 이동 전 목표 쪽으로 기수를 돌림 — 서버 내부 동작) 2단계 병합: `/vision/pose`에 `z_m`(표시용) 추가, 조원 yaw 기준 변환 명시. 사건 보고 `POST /vision/incident`(9장), 앱 메시지 `incident`·`incidents`(3.5·3.6), event `INCIDENT_NEW`, 사건 사진 `GET /incidents/{id}/photo.jpg`. 실시간 영상: 입력 `ws /vision/video`(8장), 앱 `ws /ws/video`(10.2). AI 판별은 꺼 둠(`detection: null`). 위치 추적 모드 `esp32`(XIAO 컬러)/`tt_down`(TT 하단 흑백 320×240) 전환: `cmd set_vision_mode`, `state.vision`, `config.vision_modes`, 서버↔연결 프로그램 `vision_mode`/`bridge_status`, `WRONG_MODE`(11장). 사건 보고 기본 = 슬롯 촬영(`config.photo_slots`, 9장). 시험용 합성 카메라와 `GET /sim/truth`(12장). 구현 후 보완: 모듈별 yaw 기준, 슬롯 촬영은 측정 자세만, 서버 사건 검사·위경도 채움·모드별 중복 판정, 영상 앱 5초 정지 시 끊음, 사진 404 `NOT_FOUND`, 비상정지 후 바닥에서도 모드 전환, 카메라 명령 실패는 `CMD_FAILED`, 앱 사건 키 `id@ts` |
+| 0.8 | 2026-11-25 | 차(UGV, 미니 경찰차) 제어(13장): 서버가 조원 PWA와 같은 BLE 명령으로 차에 연결(`[car]`, `--car ble/mock/off`). `config.car`, `state.car`, 명령 `car_route`·`car_stop`·`car_estop`·`car_clear_estop`, 조이스틱 `car_drive`(응답 없음), 차 위치 = 드론 인식(`POST /vision/ugv`) + 엔코더, 오류 `CAR_*`, 이벤트 `CAR_*`, `/sim/truth`에 `ugv` |

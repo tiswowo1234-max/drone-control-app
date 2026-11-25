@@ -5,6 +5,7 @@
 - 영상 송신           : send_fps마다 최신 장을 JPEG로 → ws /vision/video (위치 계산이 느려도 멈추지 않음)
 - HTTP 송신           : 위치·사건 POST (server_link.py)
 - 처리(이 파일 main) : 최신 장만 골라 위치 계산 → 위치 POST(초당 최대 pose_send_hz) → 슬롯 촬영 판단(photo_search_period_s마다)
+                        → UGV 태그 인식([ugv]): 로그·앱 영상 표시, 지도 위치는 POST /vision/ugv (차 위치)
 """
 from __future__ import annotations
 
@@ -28,9 +29,11 @@ from .localizers import make_localizer
 from .server_link import HttpSender, VideoLink, server_backend, short
 from .slots import make_capture
 from .sources import FileSource, LocalTour, MjpegSource, ServerTruth, SyntheticSource, UdpH264Source
+from .ugv import UgvDetector, UgvPath, draw_overlay, overlay_text
 
 log = logging.getLogger("bridge")
 MODE_LABEL = {"esp32": "ESP32 카메라", "tt_down": "TT 하단 카메라"}
+UGV_LOST_S = 0.5   # 이 시간 동안 안 보여야 "놓침"으로 로그 (따라가기 단계에서 [ugv] 설정으로 옮길 예정)
 
 
 def encode_jpeg(img: np.ndarray, quality: int, max_kb: float | None = None, min_quality: int = 30) -> bytes:
@@ -133,6 +136,14 @@ class Bridge:
         self.save_dir = Path(args.save_dir) if args.save_dir else None
         if self.save_dir:
             self.save_dir.mkdir(parents=True, exist_ok=True)
+        # UGV 인식 (따라가기 1단계)
+        self.ugv = UgvDetector(s.ugv) if s.ugv.enabled else None
+        self.ugv_last = None
+        self.ugv_was_seen = False
+        self.ugv_seen_at = -1e9
+        self.last_ugv_post = -1e9
+        self.last_ugv_log = -1e9
+        self.counts["ugv"] = 0
 
     # ------------------------------------------------------------ 설정 판단
 
@@ -187,7 +198,14 @@ class Bridge:
             fps = max(s.send_fps, s.pose_send_hz)
             truth = self._truth()
             label = f"({mode}, 참값: {'서버 /sim/truth' if isinstance(truth, ServerTruth) else '내장 경로'})"
-            return SyntheticSource(cam, truth, fps, label, s.mount_yaw(mode))
+            ugv = None
+            if a.ugv:
+                ux, uy = a.ugv[0], a.ugv[1]
+                ugv = UgvPath(ux, uy, a.ugv[2] if len(a.ugv) > 2 else 0.0, a.ugv_circle, a.ugv_speed)
+                label += f", UGV ({ux:.2f}, {uy:.2f})" + (f" 반지름 {a.ugv_circle:.2f}m 원 주행" if a.ugv_circle > 0 else "")
+            elif isinstance(truth, ServerTruth) and s.ugv.enabled:
+                ugv = truth.ugv_truth   # 서버 가짜 차(--car mock)의 실제 위치에 UGV 태그를 그린다
+            return SyntheticSource(cam, truth, fps, label, s.mount_yaw(mode), ugv, s.ugv)
         if mode == "esp32":
             return MjpegSource(a.esp32_url or s.esp32_camera_url)
         return UdpH264Source(s.tt_video_url, (s.tt_width_px, s.tt_height_px), s.tt_crop_top_left)
@@ -247,7 +265,13 @@ class Bridge:
             f = src.frames.latest() if src is not None else None
             if f is not None and f.id != last_id:
                 last_id = f.id
-                img = video_frame(f.image, self.s.send_width_px, self.s.mount_yaw(self.mode), self.s.video_forward_up)
+                u = self.ugv_last
+                if u is not None and f.mono - u.t > 0.5:   # 오래된 인식 결과는 그리지 않음
+                    u = None
+                img = draw_overlay(f.image, u) if u is not None else f.image
+                img = video_frame(img, self.s.send_width_px, self.s.mount_yaw(self.mode), self.s.video_forward_up)
+                if self.ugv is not None:
+                    img = overlay_text(img, u)   # 0.5초 안에 본 UGV면 숫자, 아니면 빨간 "UGV --"
                 jpg = encode_jpeg(img, self.s.jpeg_quality, self.s.max_frame_kb)
                 size = (img.shape[1], img.shape[0], "흑백" if img.ndim == 2 else "컬러")
                 if self.dry:
@@ -379,12 +403,57 @@ class Bridge:
             pose = f"위치 계산 안 됨 ({res.status})"
         screen(f"[태그] {time.strftime('%H:%M:%S')} [{self.mode}] {tags} | {pose}{skipped}")
 
+    def ugv_map_ok(self, u, res) -> bool:
+        """UGV 지도 위치를 서버로 보내도 되는지: 이 장에서 드론 위치를 실제로 측정했고(예측값 아님),
+        추정 태그 높이가 설정과 맞을 때만. 이륙·하강 중에는 드론 위치가 늦게 따라와 십수 cm 틀린 값이 나왔다(시험)."""
+        if not (u.seen and u.map_x_m is not None and res.ok and res.measured):
+            return False
+        if u.top_height_m is not None and abs(u.top_height_m - self.s.ugv.height_m) > self.s.ugv.max_height_err_m:
+            return False
+        return True
+
+    def process_ugv(self, f, res) -> None:
+        """UGV 태그 인식 → 로그 (1단계). 위치 계산이 찾은 태그를 그대로 쓰므로 추가 계산은 거의 없다."""
+        h, w = f.image.shape[:2]
+        K, dist = self.localizer.camera_matrix(w, h)
+        u = self.ugv.measure(f.mono, K, dist, self.s.mount_yaw(self.mode), tags=res.tags, image=f.image,
+                             drone=res if res.ok else None)
+        self.ugv_last = u
+        if u.seen:
+            self.counts["ugv"] += 1
+            self.ugv_seen_at = f.mono
+        # (v0.8) 지도 위치까지 나온 인식만 서버로 (차 위치 표시·경로 기준점, docs/api.md 13.3). 위치와 같은 빈도 상한
+        if self.ugv_map_ok(u, res) and f.mono - self.last_ugv_post >= 1.0 / self.s.pose_send_hz:
+            self.last_ugv_post = f.mono
+            self.sender.send_ugv({"x_m": round(u.map_x_m, 4), "y_m": round(u.map_y_m, 4),
+                                  "yaw_deg": round(u.map_yaw_deg, 1), "ts": round(f.ts, 3), "mode": self.mode,
+                                  "forward_m": round(u.forward_m, 4), "right_m": round(u.right_m, 4)})
+        if u.seen and not self.ugv_was_seen:
+            self.ugv_was_seen = True
+            log.info("[UGV] 찾음 — %s", u.line())
+            self.last_ugv_log = f.mono
+        elif not u.seen and self.ugv_was_seen and f.mono - self.ugv_seen_at >= UGV_LOST_S:
+            self.ugv_was_seen = False   # 한두 장 놓친 건 무시 (실물 영상은 깜빡임이 있다)
+            log.info("[UGV] 놓침 (%.1f초째 안 보임)%s", f.mono - self.ugv_seen_at, f" — {u.status}" if u.status else "")
+        every = self.s.ugv.log_every_s
+        if u.seen and every > 0 and f.mono - self.last_ugv_log >= every:
+            self.last_ugv_log = f.mono
+            truth = ""
+            if f.ugv_truth is not None and u.map_x_m is not None:
+                tx, ty, tyaw = f.ugv_truth
+                err = np.hypot(u.map_x_m - tx, u.map_y_m - ty) * 100
+                dyaw = (u.map_yaw_deg - tyaw + 180) % 360 - 180
+                truth = f"  | 참값 ({tx:.3f}, {ty:.3f}) → 오차 {err:.1f}cm, yaw {dyaw:+.1f}°"
+            log.info("[UGV] %s%s", u.line(), truth)
+
     def process_frame(self, f) -> None:
         self.record(f)
         res = self.localizer.process(f.image, f.mono, self.drone_state())
         self.last_result = res
         self.tag_log(res)
         self.counts["frames"] += 1
+        if self.ugv is not None:
+            self.process_ugv(f, res)
         now = time.monotonic()
         self.capture.on_pose(f.mono, res.x_m if res.ok else None, res.y_m if res.ok else None)
         if res.ok and now - self.last_pose_post >= 1.0 / self.s.pose_send_hz:
@@ -433,9 +502,13 @@ class Bridge:
         pose = "위치 없음" if r is None or not r.ok else f"({r.x_m:.3f}, {r.y_m:.3f}) m yaw {r.yaw_deg:.0f}° {r.status}"
         st = self.sender.stats
         reply = self.sender.last_pose_reply
-        log.info("[%s] 카메라 %s %s | %s | 위치 보냄 %d (ok %d) 서버응답 %s | 영상 %d장 | 사건 %d | %s",
+        ugv = ""
+        if self.ugv is not None:
+            u = self.ugv_last
+            ugv = f" | UGV {'보임' if u is not None and u.seen else '안 보임'} (인식 {self.counts['ugv']}장)"
+        log.info("[%s] 카메라 %s %s | %s | 위치 보냄 %d (ok %d) 서버응답 %s | 영상 %d장 | 사건 %d | %s%s",
                  self.mode, "OK" if ok else "없음", msg, pose, st["pose_sent"], st["pose_ok"], reply,
-                 self.video.sent_frames, self.counts["incidents"], self.drone_state_text())
+                 self.video.sent_frames, self.counts["incidents"], self.drone_state_text(), ugv)
 
     def run(self) -> None:
         self.sender.start()
@@ -476,8 +549,8 @@ class Bridge:
             self.source.stop(1.0)
         self.video.stop()
         self.sender.stop()
-        log.info("종료: 처리 %d장, 위치 %d번, 사건 %d건, 영상 %d장", self.counts["frames"], self.counts["poses"],
-                 self.counts["incidents"], self.video.sent_frames)
+        log.info("종료: 처리 %d장, 위치 %d번, 사건 %d건, 영상 %d장, UGV 인식 %d장", self.counts["frames"],
+                 self.counts["poses"], self.counts["incidents"], self.video.sent_frames, self.counts["ugv"])
 
 
 def parse_args(argv=None):
@@ -495,6 +568,10 @@ def parse_args(argv=None):
     p.add_argument("--tour", action="store_true", help="서버 없이 합성 카메라: 이륙 지점 → 슬롯 S1~S4 위 호버링 순회")
     p.add_argument("--tour-speed", type=float, default=0.3, help="--tour 이동 속도 m/s")
     p.add_argument("--tour-hover", type=float, default=4.0, help="--tour 슬롯 위에서 머무는 초")
+    p.add_argument("--ugv", type=float, nargs="+", metavar="V",
+                   help="합성 카메라에 UGV 태그 그리기: X Y [YAW] (m, 도). --truth와 같이 쓰면 드론 아래에 UGV를 둘 수 있다")
+    p.add_argument("--ugv-circle", type=float, default=0.0, help="--ugv: (X, Y) 중심 이 반지름(m)으로 원 주행 (0 = 고정)")
+    p.add_argument("--ugv-speed", type=float, default=0.1, help="--ugv-circle 주행 속도 m/s")
     p.add_argument("--input", help="오프라인 시험: 영상 파일 또는 사진 폴더")
     p.add_argument("--input-fps", type=float, help="--input 재생 속도 (기본 [video] send_fps)")
     p.add_argument("--input-once", action="store_true", help="--input을 한 번만 재생하고 끝냄")
@@ -525,6 +602,8 @@ def main(argv=None):
         s = dataclasses.replace(s, server_url=args.server.rstrip("/"))
     if args.truth and len(args.truth) not in (2, 3, 4):
         raise SystemExit("--truth는 X Y [Z YAW]")
+    if args.ugv and len(args.ugv) not in (2, 3):
+        raise SystemExit("--ugv는 X Y [YAW]")
     log.info("설정 %s, 서버 %s%s", s.source, s.server_url, " (dry-run: 보내지 않음)" if args.dry_run else "")
     if log_path:
         log.info("로그 파일: %s", log_path)

@@ -469,6 +469,7 @@ class TelloBackend(DroneBackend):
                 args = (fwd, -right, up)
 
             def go(a=args, d=map_delta):
+                self.provider.begin_move()   # 구간 시작 시각 (카메라가 이미 반영한 몫을 다시 더하지 않게)
                 self._cmd.go_xyz_speed(*a, int(self.cfg.speed_cm_s))
                 # 추정 위치 갱신도 명령 스레드에서 한다: 미션이 취소돼도 이미 날아간 구간은 반영되도록
                 self.provider.on_move(*d)

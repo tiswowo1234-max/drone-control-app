@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +72,31 @@ class IncidentCfg:
 class BridgeCfg:
     """vision/ 연결 프로그램 (docs/api.md 11장). 서버는 default_mode만 쓴다."""
     default_mode: str = "tt_down"
+
+
+@dataclass(frozen=True)
+class CarCfg:
+    """[car] UGV(미니 경찰차) BLE 제어. mode = ble | mock | off."""
+    mode: str = "off"
+    ble_name: str = "PoliceCar-XIAO"
+    ble_address: str = ""
+    service_uuid: str = "8f9a0001-6c2e-4c1a-9d21-55a0a1110000"
+    rx_uuid: str = "8f9a0002-6c2e-4c1a-9d21-55a0a1110000"
+    tx_uuid: str = "8f9a0003-6c2e-4c1a-9d21-55a0a1110000"
+    chunk_bytes: int = 18
+    max_speed_mm_s: float = 100.0
+    max_omega_rad_s: float = 1.5
+    route_speed_mm_s: float = 60.0
+    max_points: int = 16
+    drive_timeout_s: float = 0.5
+    pose_fresh_s: float = 1.0
+    route_anchor_max_s: float = 120.0
+    map_margin_cm: float = 5.0
+    odom_jump_mm: float = 300.0
+    reset_wait_s: float = 1.5
+    route_start_timeout_s: float = 2.0
+    mock_start_cm: tuple[float, float] = (120.0, 70.0)
+    mock_start_yaw_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -222,6 +247,7 @@ class Settings:
     bridge: BridgeCfg = field(default_factory=BridgeCfg)
     align: AlignCfg = field(default_factory=AlignCfg)
     photo_slots: list[PhotoSlot] = field(default_factory=list)
+    car: CarCfg = field(default_factory=CarCfg)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -263,6 +289,12 @@ def _photo_slots(items: list[dict[str, Any]]) -> list[PhotoSlot]:
                              center_cm=(float(c[0]), float(c[1])),
                              corners_cm=[(float(p[0]), float(p[1])) for p in it.get("corners_cm", [])]))
     return out
+
+
+def _car(table: dict[str, Any] | None) -> CarCfg:
+    c = _sub(CarCfg, table)
+    st = c.mock_start_cm
+    return replace(c, mock_start_cm=(float(st[0]), float(st[1])))
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
@@ -307,6 +339,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         bridge=_sub(BridgeCfg, raw.get("bridge")),
         align=_sub(AlignCfg, raw.get("align")),
         photo_slots=_photo_slots(raw.get("photo_slots", [])),
+        car=_car(raw.get("car")),
         raw=raw,
     )
     validate(s)
@@ -346,5 +379,12 @@ def validate(s: Settings) -> None:
     for spec in (s.sim_calibration.map_x_from, s.sim_calibration.map_y_from):
         if spec not in ("+x", "-x", "+z", "-z"):
             errs.append(f"[sim_calibration] 축 설정 '{spec}'이 잘못됐습니다 (+x -x +z -z)")
+    c = s.car
+    if c.mode not in ("ble", "mock", "off"):
+        errs.append("[car] mode는 ble | mock | off 중 하나여야 합니다")
+    if not (0 < c.max_speed_mm_s <= 200 and 0 < c.max_omega_rad_s <= 3 and 0 < c.route_speed_mm_s <= c.max_speed_mm_s):
+        errs.append("[car] 속도 값이 이상합니다 (0 < route_speed_mm_s <= max_speed_mm_s <= 200, max_omega_rad_s <= 3)")
+    if c.max_points < 2 or c.chunk_bytes < 1 or c.drive_timeout_s <= 0:
+        errs.append("[car] max_points >= 2, chunk_bytes >= 1, drive_timeout_s > 0 이어야 합니다")
     if errs:
         raise ValueError("settings.toml 오류: " + "; ".join(errs))

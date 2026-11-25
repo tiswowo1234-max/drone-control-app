@@ -80,6 +80,9 @@ class PositionProvider(ABC):
         """텔레메트리를 읽을 때마다(약 10Hz) SDK 상태 dict를 넘겨준다.
         실제 TT: bat, h, yaw, mid, x, y, z, mpry ... / 시뮬레이터: + world_x, world_y, world_z"""
 
+    def begin_move(self) -> None:
+        """상대 이동 명령 하나를 보내기 직전 (구간 시작 시각 기록용). 대부분의 공급자는 할 일 없음."""
+
     def on_move(self, dx_cm: float, dy_cm: float, dz_cm: float) -> None:
         """상대 이동 명령 하나가 성공적으로 끝났을 때 (지도 좌표계 변위)."""
 
@@ -166,6 +169,9 @@ class VisionProvider(PositionProvider):
         self._yaw_sample: tuple[float, float, float | None] | None = None  # (yaw, 받은 시각, confidence)
         self._seq = 0                                    # 받은 카메라 위치 수 (초기 정렬이 셈)
         self._recent: list[tuple[int, float | None]] = []  # 최근 (번호, confidence)
+        # 이중 가산 방지 (2026-11-25): 구간 시작 시각, 추정값을 카메라 위치로 마지막으로 맞춘 시각(clear()로 지우지 않음)
+        self._move_t0: float | None = None
+        self._synced_at: float | None = None
 
     @property
     def seq(self) -> int:
@@ -198,6 +204,7 @@ class VisionProvider(PositionProvider):
             del self._recent[:-200]
             if yaw_deg is not None:
                 self._yaw_sample = (yaw_deg, self._fix_at, confidence)
+            self._synced_at = self._fix_at
         fb = self.fallback.pose()
         z = fb.z_cm if fb else 0.0
         yaw = yaw_deg if yaw_deg is not None else (fb.yaw_deg if fb else 0.0)
@@ -246,8 +253,27 @@ class VisionProvider(PositionProvider):
     def update(self, raw: dict[str, Any]) -> None:
         self.fallback.update(raw)
 
+    def begin_move(self) -> None:
+        with self._lock:
+            self._move_t0 = self._clock()
+        self.fallback.begin_move()
+
     def on_move(self, dx_cm: float, dy_cm: float, dz_cm: float) -> None:
-        self.fallback.on_move(dx_cm, dy_cm, dz_cm)
+        """구간이 끝났을 때 추정값에 더할 몫 = 마지막 카메라 위치 이후에 움직였을 부분만.
+
+        카메라 위치(submit)가 올 때마다 추정값을 그 위치로 맞추므로, 구간 도중 카메라가 봤다면 그만큼은 이미 반영돼 있다.
+        예전에는 여기서 구간 거리를 통째로 또 더해, 도착 직후 카메라가 끊기면 위치가 최대 한 구간(50cm) 튀었다(이중 가산).
+        구간 안에서 속도가 일정하다고 보고, (구간 끝 - 마지막 카메라 시각) / (구간 끝 - 구간 시작) 비율만 더한다.
+        구간 중 카메라를 못 봤거나 begin_move가 없었으면 예전처럼 전부 더한다.
+        """
+        now = self._clock()
+        with self._lock:
+            t0, self._move_t0 = self._move_t0, None
+            synced = self._synced_at
+        frac = 1.0
+        if t0 is not None and synced is not None and synced >= t0 and now > t0:
+            frac = min(1.0, max(0.0, (now - synced) / (now - t0)))
+        self.fallback.on_move(dx_cm * frac, dy_cm * frac, dz_cm * frac)
 
 
 class MissionPadProvider(PositionProvider):

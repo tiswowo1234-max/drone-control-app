@@ -46,11 +46,13 @@ class HttpSender:
     def __init__(self, server_url: str, dry_run: bool = False, timeout: float = 2.0, printer=print):
         self.url, self.dry, self.timeout, self.print = server_url, dry_run, timeout, printer
         self._pose = None
+        self._ugv = None   # (v0.8) 드론이 인식한 UGV 지도 위치 — 위치처럼 최신 값 하나만
         self._incidents: queue.Queue = queue.Queue(maxsize=20)
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self.warn = RateLimitedWarn()
-        self.stats = {"pose_sent": 0, "pose_ok": 0, "pose_err": 0, "incident_sent": 0, "incident_ok": 0}
+        self.stats = {"pose_sent": 0, "pose_ok": 0, "pose_err": 0, "incident_sent": 0, "incident_ok": 0,
+                      "ugv_sent": 0, "ugv_ok": 0}
         self.last_pose_reply = None
         self.last_incident_reply = None
         self._session = None
@@ -74,6 +76,11 @@ class HttpSender:
             self._pose = payload
             self._cond.notify_all()
 
+    def send_ugv(self, payload: dict):
+        with self._cond:
+            self._ugv = payload
+            self._cond.notify_all()
+
     def send_incident(self, payload: dict):
         try:
             self._incidents.put_nowait(payload)
@@ -86,10 +93,13 @@ class HttpSender:
         while not self._stop.is_set():
             with self._cond:
                 self._cond.wait_for(lambda: self._stop.is_set() or self._pose is not None
-                                    or not self._incidents.empty(), 0.5)
+                                    or self._ugv is not None or not self._incidents.empty(), 0.5)
                 pose, self._pose = self._pose, None
+                ugv, self._ugv = self._ugv, None
             if pose is not None:
                 self._post("/vision/pose", pose, "pose")
+            if ugv is not None:
+                self._post("/vision/ugv", ugv, "ugv")
             while not self._incidents.empty():
                 try:
                     inc = self._incidents.get_nowait()
@@ -100,7 +110,7 @@ class HttpSender:
     def _post(self, path: str, payload: dict, kind: str):
         self.stats[f"{kind}_sent"] += 1
         if self.dry:
-            if kind == "incident":
+            if kind in ("incident", "ugv"):
                 self.print(f"[dry-run] POST {path} {short(payload)}")
             else:
                 self.last_pose_reply = {"dry_run": True}

@@ -15,11 +15,11 @@
 |---|---|---|
 | 1단계 | 앱 + 중계 서버 MVP (mock/sim, APK, GitHub 공개) | 완료 |
 | 2단계 | 조원 위치 인식 코드 병합: 카메라 → `vision/` → 서버 → 앱 | 구현 완료. 실물 조정 중(아래 "실물 미확인") |
-| **3단계 (다음)** | **① UGV 추종 병합** — 드론이 지상 로봇(UGV)을 따라감 (UGV 담당 조원) | 시작 전. 구조 제안: dev-guide 8장 |
+| **3단계 (진행 중)** | **① UGV 추종 병합** — 드론이 지상 로봇(UGV)을 따라감 (UGV 담당 조원) | 방식 결정(드론 하단 카메라가 UGV 태그를 봄). UGV 인식(1단계)·차 BLE 제어(API v0.8 13장) 구현, 실물 미시험. 추종 비행(`rc`) 남음 |
 | | **② 시뮬레이터 + 앱 통합** — 앱 자체를 Unity 시뮬레이터와 합침 (시뮬레이터 담당 조원) | 시작 전. 방식 미정. 현황·선택지: dev-guide 9장 |
 
 3단계 작업자에게:
-- 3단계 방식(UGV 위치 출처, 추종 방식, 앱·시뮬레이터 통합 형태)은 **아직 정해지지 않았다.**
+- UGV: 위치 출처·추종 모양·차 연결 방식은 **정해졌다**(decisions.md 2026-11-25 세 줄). 앱·시뮬레이터 통합 형태는 아직 미정.
   조원 코드를 보고 2~3가지 선택지를 비교해 추천하고, 사용자 확인을 받은 뒤 시작한다.
 - 결정은 `docs/decisions.md` 맨 위에 기록한다.
 - 앱 ⇄ 서버 메시지를 바꾸면 `docs/api.md`를 **v0.8**로 올리고 서버·앱·테스트를 함께 고친다.
@@ -39,7 +39,7 @@
 | `vision/` | 위치 인식 연결 프로그램 + 조원 코드 사본(`vision/teammate/`, 출처 `SOURCE.md`) | `vision/README.md` |
 | `app/` | Flutter 앱 (서버 API에만 의존, 위치 계산 안 함) | `app/README.md` |
 | `config/settings.toml` | **조정 가능한 모든 숫자** (서버·연결 프로그램 공통, 앱은 `config` 메시지로 받음) | 파일 안 주석 |
-| `docs/` | `api.md`(명세 v0.7, 기준 문서) · `dev-guide.md` · `progress.md` · `decisions.md` · `teammate/interface.md`(1단계 조원용, 일부 오래됨) | |
+| `docs/` | `api.md`(명세 v0.8, 기준 문서) · `dev-guide.md` · `progress.md` · `decisions.md` · `teammate/interface.md`(1단계 조원용, 일부 오래됨) | |
 | `map/`, `tools/` | 바닥 인쇄 지도 원본(2.5m×2.5m EPS/PDF), 지도 이미지·위경도 정합 스크립트 | |
 | `start_real_drone.bat` / `start_demo_no_drone.bat` | 간편 실행(실제 드론 / 드론 없이 합성 카메라) | `README.md` |
 
@@ -86,7 +86,8 @@
   - 2026-11-25에 11-21 이후 실물 시험 수정 전부와 3단계 인수인계 문서를 커밋해 GitHub에 push했다(`0440ead` 이후).
     포함: 유지 신호, 자체 착륙 감지, 거리센서 고도, 기울기 전달, 카메라 방향 보정, 태그 영역 0.7, 슬롯 보드 태그(꺼 둠), 시야각 75.5°, 초기 정렬, 출동 방향 바라보기.
   - `.codex/`, `AGENTS.md`는 Claude가 만든 것이 아니다(출처 불명, 내용은 옛 CLAUDE.md 사본). 사용자 결정으로 **그대로 두고 커밋하지 않는다**.
-- **테스트 (11-25):** 서버 127개, vision 39개 통과. 앱 63개(11-21, 이후 앱 변경 없음).
+- **테스트 (11-25, UGV·차 제어 추가 후):** 서버 149개, vision 49개 통과(서버 `test_shutdown.py` 2개는 Linux 작성 환경에서만 실패 — Windows에서 확인). 앱은 차 화면 코드·`test/car_test.dart`를 추가했지만 **아직 컴파일·실행 안 함** → `flutter analyze`, `flutter test` 먼저.
+- **UGV·차 (실물 미확인):** 태그 인쇄(`vision/tools/make_ugv_tag.py`, 100% 크기) → 드론을 손으로 50cm에 들고 로그 `[UGV]`의 앞·오른쪽·방향 부호 확인(vision/README 5-1). 차는 노트북 블루투스, PWA 연결 끊고 `start_real_drone.bat`(서버 창 `car BLE connected`), 처음엔 바퀴를 띄우고 조이스틱부터. 드론 없이: `start_demo_no_drone.bat`(가짜 차 포함).
 - **실물 미확인 → 다음 비행에서 확인:**
   1. **시야각 75.5°:** 연결 프로그램 `[태그]` 줄의 카메라 높이 ÷ 거리센서 비율이 1.0 근처인지, "높이 불일치로 버림"이 줄었는지 본다. 로그는 `vision/logs/bridge-날짜.log`이고, 11-25 비율은 1.34였다.
   2. **초기 정렬:** 이륙 뒤 `ALIGN_START` → `ALIGN_DONE`(태그 ID 37)이 오는지 본다. 실패하면 `ALIGN_FAILED`의 사유를 확인한다.

@@ -48,6 +48,7 @@ class DroneState {
     this.target,
     this.batteryPct,
     this.vision,
+    this.car,
   });
 
   final double? ts;
@@ -61,6 +62,9 @@ class DroneState {
 
   /// 위치 추적 카메라 상태 (v0.7). 이전 서버면 null.
   final VisionStatus? vision;
+
+  /// 차(UGV) 상태 (v0.8 13장). 서버에 차 기능이 없으면 null.
+  final CarStatus? car;
 
   /// 위치 추적 모드를 바꿀 수 있는 드론 상태인지 (docs/api.md 11장: 착지·호버링일 때만)
   bool get canSwitchVision => mode == 'idle' || mode == 'hovering';
@@ -81,6 +85,84 @@ class DroneState {
       target: target,
       batteryPct: _num(j['battery_pct']),
       vision: VisionStatus.fromJson(j['vision']),
+      car: CarStatus.fromJson(j['car']),
+    );
+  }
+}
+
+/// `state.car` — 차(UGV, 미니 경찰차) 상태 (docs/api.md v0.8 13장)
+///
+/// 위치는 **드론이 인식한 UGV 태그** 기준이다. 드론이 못 보는 동안은 마지막 인식 위치에서
+/// 차 엔코더 이동량으로 이어 간다(`posSource == 'odom'`).
+class CarStatus {
+  const CarStatus({
+    required this.connected,
+    this.linkMessage,
+    this.state,
+    this.pos,
+    this.posSource,
+    this.seenAgeS,
+    this.routePoints = const [],
+    this.routeWp,
+    this.routeN,
+    this.driving = false,
+  });
+
+  /// 서버 ⇄ 차 BLE 연결
+  final bool connected;
+
+  /// 연결 상태 설명 (예: "차 찾는 중 (PoliceCar-XIAO)")
+  final String? linkMessage;
+
+  /// 차 펌웨어(OpenRB) 상태: READY · MANUAL · ROUTE_READY · RUNNING · ESTOP · MOTOR_ERROR · LINK_LOST
+  final String? state;
+
+  /// 지도 위치 (cm, yaw = 지도 위쪽 0·시계 +). z는 쓰지 않는다.
+  final DronePos? pos;
+
+  /// `vision` = 드론이 지금 보고 있음 / `odom` = 마지막 인식 + 엔코더 / null = 모름
+  final String? posSource;
+
+  /// 드론이 차를 마지막으로 인식한 뒤 지난 시간 (초). 한 번도 못 봤으면 null.
+  final double? seenAgeS;
+
+  /// 주행 중인 경로 (지도 cm, 첫 점 = 출발 위치). 없으면 빈 목록.
+  final List<Offset> routePoints;
+
+  /// 지금 향하는 경로점 번호 / 경로점 수 (차가 알려 준 값)
+  final int? routeWp, routeN;
+
+  /// 조이스틱으로 움직이는 중 (서버 기준)
+  final bool driving;
+
+  bool get hasRoute => routePoints.length >= 2;
+
+  /// 비상정지·모터 오류 → 해제 전까지 주행 불가
+  bool get blocked => state == 'ESTOP' || state == 'MOTOR_ERROR';
+
+  static CarStatus? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final route = v['route'];
+    final pts = <Offset>[];
+    if (route is Map && route['points_cm'] is List) {
+      for (final p in route['points_cm'] as List) {
+        if (p is List && p.length >= 2 && p[0] is num && p[1] is num) {
+          pts.add(Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()));
+        }
+      }
+    }
+    int? i(Object? x) => x is num ? x.toInt() : null;
+    return CarStatus(
+      connected: v['connected'] == true,
+      linkMessage: v['link_message'] is String ? v['link_message'] as String : null,
+      state: v['state'] is String ? v['state'] as String : null,
+      pos: DronePos.fromJson(v['pos']),
+      posSource: v['pos_source'] is String ? v['pos_source'] as String : null,
+      seenAgeS: _num(v['seen_age_s']),
+      routePoints: pts,
+      routeWp: route is Map ? i(route['wp']) : null,
+      routeN: route is Map ? i(route['n']) : null,
+      driving: v['driving'] == true,
     );
   }
 }
@@ -355,6 +437,22 @@ class IncidentsMsg extends ServerMessage {
 Map<String, dynamic> buildCmd(String id, String cmd, [Map<String, dynamic>? extra]) =>
     {'type': 'cmd', 'id': id, 'cmd': cmd, ...?extra};
 
+/// 앱 → 서버 `car_drive` JSON (docs/api.md v0.8 13.2, 응답 없음). 조이스틱을 잡고 있는 동안 0.12초마다.
+Map<String, dynamic> buildCarDrive(int vMmS, double omegaRadS) =>
+    {'type': 'car_drive', 'v_mm_s': vMmS, 'omega_rad_s': omegaRadS};
+
+/// 조이스틱 위치 → 차 속도 (조원 PWA와 같은 식).
+/// [knob]: 가운데 (0,0), 반지름 1, **화면 기준**(오른쪽 +x, 아래 +y).
+/// 위 = 전진(+v), 왼쪽 = 좌회전(+ω). 가운데 [dead] 안은 0.
+(int, double) joystickToDrive(Offset knob, double maxSpeedMmS, double maxOmegaRadS,
+    {double dead = 0.08}) {
+  final x = knob.dx.abs() < dead ? 0.0 : knob.dx;
+  final y = knob.dy.abs() < dead ? 0.0 : knob.dy;
+  final v = (-y * maxSpeedMmS).round();
+  final w = double.parse((-x * maxOmegaRadS).toStringAsFixed(2));
+  return (v == 0 ? 0 : v, w == 0 ? 0.0 : w); // -0 방지
+}
+
 /// 앱 → 서버 `ping` JSON (docs/api.md 4.2)
 Map<String, dynamic> buildPing(DateTime now) =>
     {'type': 'ping', 'ts': now.millisecondsSinceEpoch / 1000.0};
@@ -405,6 +503,27 @@ String modeKo(String mode) => switch (mode) {
       'landing' => '착륙 중',
       'emergency' => '비상 정지',
       _ => mode,
+    };
+
+/// 차 펌웨어 상태 → 한국어 (모르는 값은 그대로)
+String carStateKo(String? s) => switch (s) {
+      'READY' => '대기',
+      'MANUAL' => '수동 조종',
+      'ROUTE_READY' => '경로 받음',
+      'RUNNING' => '경로 주행 중',
+      'ESTOP' => '비상정지',
+      'MOTOR_ERROR' => '모터 오류',
+      'LINK_LOST' => '통신 끊김',
+      null => '-',
+      _ => s,
+    };
+
+/// 차 위치 출처 → 한국어
+String carPosSourceKo(String? s) => switch (s) {
+      'vision' => '드론 인식',
+      'odom' => '엔코더로 이어감',
+      null => '위치 모름',
+      _ => s,
     };
 
 /// state.pos_source → 한국어
