@@ -222,7 +222,8 @@ void main() {
       link.push({...stateMsg(mode: 'following'), 'car': carState()});
       await tester.pump();
       expect(find.byKey(const Key('btn-follow-start')), findsNothing);
-      expect(find.text('차 따라가는 중'), findsWidgets);
+      // 상태 줄은 Text.rich('모드 ' + '차 따라가는 중')라 전체 글자가 같아야 하는 find.text로는 안 잡힌다
+      expect(find.textContaining('차 따라가는 중', findRichText: true), findsWidgets);
       await tester.tap(find.byKey(const Key('btn-follow-stop')));
       await tester.pump();
       expect(link.cmds.last['cmd'], 'stop');

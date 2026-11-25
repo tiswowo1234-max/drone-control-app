@@ -224,7 +224,11 @@ def test_app_link_lost_stops_moving_car(settings):
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as ws:
             recv_until(ws, lambda m: m["type"] == "state" and m["car"]["connected"])
-            time.sleep(0.3)
+            # 차의 첫 STATUS(엔코더 위치)를 받을 때까지 기다린다. 고정 0.3초는 Windows 타이머에서 모자라 실패했다
+            for _ in range(30):
+                if app.state.car.tracker.odom is not None:
+                    break
+                time.sleep(0.1)
             _see_car(client)
             ws.send_json(cmd("c1", "car_route", points_cm=[[120, 200]], speed_mm_s=30))
             assert recv_until(ws, lambda m: m["type"] == "ack")["ok"]

@@ -298,7 +298,7 @@ class DroneClient extends ChangeNotifier {
           for (final p in pointsCm)
             [double.parse(p.dx.toStringAsFixed(1)), double.parse(p.dy.toStringAsFixed(1))],
         ],
-        if (speedMmS != null) 'speed_mm_s': speedMmS,
+        'speed_mm_s': ?speedMmS,
       });
 
   /// 드론이 차 뒤를 따라 날기 시작 (호버링 중, 드론 카메라에 차 태그가 보일 때). 멈춤은 [stop].

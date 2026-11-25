@@ -86,8 +86,13 @@
   - 2026-11-25에 11-21 이후 실물 시험 수정 전부와 3단계 인수인계 문서를 커밋해 GitHub에 push했다(`0440ead` 이후).
     포함: 유지 신호, 자체 착륙 감지, 거리센서 고도, 기울기 전달, 카메라 방향 보정, 태그 영역 0.7, 슬롯 보드 태그(꺼 둠), 시야각 75.5°, 초기 정렬, 출동 방향 바라보기.
   - `.codex/`, `AGENTS.md`는 Claude가 만든 것이 아니다(출처 불명, 내용은 옛 CLAUDE.md 사본). 사용자 결정으로 **그대로 두고 커밋하지 않는다**.
-- **테스트 (11-25, 차 따라가기 추가 후, 협업자 Mac·Python 3.10):** 서버 168개 중 165개, vision 49개 중 48개 통과. 실패 4개(`test_shutdown.py` 2개, `test_protocol.py` 명령권 넘김 1개, vision pyproj 1개)는 따라가기 전 커밋에서도 똑같이 실패함 → Windows에서 확인. 앱은 차 화면·따라가기 버튼·`test/car_test.dart`를 추가했지만 **아직 컴파일·실행 안 함** → `flutter analyze`, `flutter test` 먼저.
-- **차 따라가기 (실물 미확인, 앱 코드 미컴파일):** 먼저 TT `rc` 값 1이 몇 cm/s인지 재서 `[real] rc_per_cm_s`를 맞춘다. 차 위 50cm 호버링 → 차 패널 '드론 따라가기' → 차를 조이스틱으로 천천히. 흔들리면 `[follow] gain_per_s`를 줄인다. 멈춤 = 정지 버튼.
+- **테스트 (11-25 Windows, 저장소 주인 PC):** 서버 168개, vision 49개, 앱 75개 모두 통과, `flutter analyze` 문제 없음.
+  협업자 Mac에서 실패하던 4개(`test_shutdown.py` 2, `test_protocol.py` 1, vision pyproj 1)는 Windows에서 통과.
+  Windows에서만 나던 실패 3건은 고침(`docs/decisions.md` 11-25 "Windows 검증" 항목).
+  `test_real_safety.py::test_keepalive_only_while_flying_and_idle`은 전체 실행 중 한 번 실패했다가 다시 돌리면 통과(시간에 민감, 가끔 흔들림).
+- **폰 시험 (11-25, mock 드론 + 가짜 차 + 합성 카메라, APK `C:\dev\경비드론-UGV.apk`):** 차 인식(`CAR_LOCATED`)·차 조이스틱·드론 차 따라가기 정상(사용자 확인).
+  따라가기는 차가 드론 카메라에 보이는 상태에서 '드론 따라가기'를 눌러야 시작한다(조이스틱만으로는 따라가지 않음 — 설계대로).
+- **차 따라가기 (실물 미확인):** 먼저 TT `rc` 값 1이 몇 cm/s인지 재서 `[real] rc_per_cm_s`를 맞춘다. 차 위 50cm 호버링 → 차 패널 '드론 따라가기' → 차를 조이스틱으로 천천히. 흔들리면 `[follow] gain_per_s`를 줄인다. 멈춤 = 정지 버튼.
 - **UGV·차 (실물 미확인):** 태그 인쇄(`vision/tools/make_ugv_tag.py`, 100% 크기) → 드론을 손으로 50cm에 들고 로그 `[UGV]`의 앞·오른쪽·방향 부호 확인(vision/README 5-1). 차는 노트북 블루투스, PWA 연결 끊고 `start_real_drone.bat`(서버 창 `car BLE connected`), 처음엔 바퀴를 띄우고 조이스틱부터. 드론 없이: `start_demo_no_drone.bat`(가짜 차 포함).
 - **실물 미확인 → 다음 비행에서 확인:**
   1. **시야각 75.5°:** 연결 프로그램 `[태그]` 줄의 카메라 높이 ÷ 거리센서 비율이 1.0 근처인지, "높이 불일치로 버림"이 줄었는지 본다. 로그는 `vision/logs/bridge-날짜.log`이고, 11-25 비율은 1.34였다.

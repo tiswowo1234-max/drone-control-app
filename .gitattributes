@@ -2,3 +2,5 @@
 map/*.eps -text
 *.pdf binary
 *.png binary
+# 조원 지도 데이터는 해시(SHA-256)로 검사하므로 Windows에서도 줄바꿈을 바꾸지 않는다
+vision/teammate/data/maps/*.json -text
