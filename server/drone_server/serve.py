@@ -89,6 +89,9 @@ def run_until_stopped(server: uvicorn.Server) -> int:
 
 
 def make_server(app, host: str, port: int, **kw) -> DroneServer:
+    # loop="asyncio": Mac·Linux에서 uvicorn[standard]가 uvloop를 자동으로 쓰는데, Windows에는 uvloop가 없다.
+    # 운영체제마다 다르게 돌지 않도록 늘 기본 asyncio를 쓴다 (종료 처리·시험이 asyncio 기준으로 맞춰져 있음).
     config = uvicorn.Config(app, host=host, port=port, log_level=kw.pop("log_level", "warning"),
-                            timeout_graceful_shutdown=kw.pop("timeout_graceful_shutdown", GRACEFUL_TIMEOUT_S), **kw)
+                            timeout_graceful_shutdown=kw.pop("timeout_graceful_shutdown", GRACEFUL_TIMEOUT_S),
+                            loop=kw.pop("loop", "asyncio"), **kw)
     return DroneServer(config)

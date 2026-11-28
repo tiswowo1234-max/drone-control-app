@@ -41,7 +41,7 @@
 | `config/settings.toml` | **조정 가능한 모든 숫자** (서버·연결 프로그램 공통, 앱은 `config` 메시지로 받음) | 파일 안 주석 |
 | `docs/` | `api.md`(명세 v0.8, 기준 문서) · `dev-guide.md` · `progress.md` · `decisions.md` · `teammate/interface.md`(1단계 조원용, 일부 오래됨) | |
 | `map/`, `tools/` | 바닥 인쇄 지도 원본(2.5m×2.5m EPS/PDF), 지도 이미지·위경도 정합 스크립트 | |
-| `start_real_drone.bat` / `start_demo_no_drone.bat` | 간편 실행(실제 드론 / 드론 없이 합성 카메라) | `README.md` |
+| `start_real_drone.bat` / `start_demo_no_drone.bat` | 간편 실행(실제 드론 / 드론 없이 합성 카메라). Mac은 같은 이름의 `.command`(2026-11-26) | `README.md` |
 
 ## 핵심 약속 (틀리기 쉬운 것)
 - **지도 좌표:**

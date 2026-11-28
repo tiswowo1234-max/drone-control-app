@@ -76,6 +76,23 @@ cd vision
 .\run_bridge.bat                    # 서버를 먼저 켠 뒤 실행 (옵션: --help)
 ```
 
+## 실행하기 (Mac)
+Windows와 같은 순서이고, `.bat` 대신 `.command` 파일을 Finder에서 **더블클릭**합니다(터미널 창 두 개가 새로 열림).
+- **준비(처음 한 번):**
+  - Python 3.11 이상: 터미널에서 `brew install python@3.12`. 가상환경은 처음 실행할 때 자동으로 만듭니다.
+  - **저장소 폴더 경로에 `:`가 있으면 안 됩니다**(Mac에서 Python 가상환경을 만들 수 없음). 예: `~/dev/drone-control-app`.
+  - 처음 더블클릭할 때 "확인되지 않은 개발자" 경고가 뜨면: 파일을 **오른쪽 클릭 → 열기**. 실행 권한이 없다고 하면 터미널에서
+    `chmod +x start_*.command server/run_server.sh vision/run_bridge.sh`.
+- **드론 없이 시험:** `start_demo_no_drone.command` — 폰은 Mac과 같은 Wi-Fi에 연결.
+- **실제 드론:** `start_real_drone.command` — Mac Wi-Fi를 TT에 연결. 폰은 **TT Wi-Fi에 함께 연결**하면 Mac과 같은 네트워크가 됩니다
+  (안드로이드 USB 테더링은 Mac에서 기본으로 안 됨). 실행 창에 나온 `192.168.10.x` 주소를 앱 ⚙에 넣습니다.
+- **차(UGV) 블루투스:** 처음 한 번 터미널에서 `server/.venv/bin/python server/tools/ble_scan.py`로 차가 보이는지 확인합니다.
+  "터미널이 블루투스를 사용하려고 합니다" 창이 뜨면 **허용**. 거부하면 macOS가 서버를 바로 종료시킵니다
+  (다시 켜기: 시스템 설정 → 개인정보 보호 및 보안 → 블루투스 → 터미널).
+- 직접 실행: `server/run_server.sh real --vision`, `vision/run_bridge.sh` (Windows의 `.bat`과 같은 인자).
+- Mac에서 확인한 것(2026-11-26): 드론 없이 시험 전체, 서버·vision 테스트 전부, UDP 11111 수신, OpenCV FFmpeg.
+  **실물(TT 영상·차 블루투스 연결)은 아직 Mac에서 시험하지 않음.**
+
 ### 앱
 - 안드로이드: 빌드한 APK를 설치 → 오른쪽 위 ⚙에 노트북 주소 입력(예: `192.168.0.10`).
 - PC 브라우저(개발용): `app/`에서 `flutter run -d edge`.
