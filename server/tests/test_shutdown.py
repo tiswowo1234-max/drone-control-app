@@ -33,6 +33,14 @@ class _LeakedTransport:
         pass
 
 
+def attach_leak(server, transport) -> None:
+    """새는 연결 하나를 서버 연결 수에 넣는다. Python 3.13+는 _attach(transport), 3.12는 _attach()(수만 셈)."""
+    try:
+        server._attach(transport)
+    except TypeError:
+        server._attach()
+
+
 def start_server(settings, leak: bool):
     port = free_port()
     srv = make_server(create_app(settings, MockBackend(settings)), "127.0.0.1", port)
@@ -46,7 +54,7 @@ def start_server(settings, leak: bool):
     if leak:
         # 실제 버그 재현: _call_connection_lost()가 예외로 끝나 server._detach()가 안 불린 상태
         srv._leaked = _LeakedTransport()  # _clients는 WeakSet이라 강한 참조를 들고 있어야 한다
-        srv.servers[0]._attach(srv._leaked)
+        attach_leak(srv.servers[0], srv._leaked)
     return srv, th, port
 
 
@@ -83,7 +91,7 @@ def test_without_timeout_the_leak_would_hang(settings):
             break
         time.sleep(0.05)
     leaked = _LeakedTransport()
-    srv.servers[0]._attach(leaked)
+    attach_leak(srv.servers[0], leaked)
     srv.should_exit = True
     th.join(timeout=3)
     hung = th.is_alive()

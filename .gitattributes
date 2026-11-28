@@ -4,3 +4,6 @@ map/*.eps -text
 *.png binary
 # 조원 지도 데이터는 해시(SHA-256)로 검사하므로 Windows에서도 줄바꿈을 바꾸지 않는다
 vision/teammate/data/maps/*.json -text
+# Mac·Linux 실행 파일은 Windows에서 받아도 줄바꿈을 LF로 유지한다 (CRLF면 실행이 깨짐)
+*.sh text eol=lf
+*.command text eol=lf
